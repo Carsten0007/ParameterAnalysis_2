@@ -30,7 +30,6 @@ FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 PARAM_SPECS = {
     "EMA_FAST": (5, 0, 0),     # (start, band, step)  int
     "EMA_SLOW": (21, 0, 0),    # int
-
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": (4.0, 0.0, 0.0),  # float
     "SIGNAL_MOMENTUM_TOLERANCE": (1.2, 0.0, 0.0),          # float
     "STOP_LOSS_PCT": (0.0050, 0.0, 0.0),                   # float
@@ -39,6 +38,19 @@ PARAM_SPECS = {
     "TAKE_PROFIT_PCT": (0.0060, 0.0, 0.0),                 # float
     "BREAK_EVEN_STOP_PCT": (0.0010, 0.0, 0.0),            # float
     "BREAK_EVEN_BUFFER_PCT": (0.0005, 0.0, 0.0),          # float
+}
+
+PARAM_ABBR = {
+    "EMA_FAST": "E_FAST",
+    "EMA_SLOW": "E_SLOW",
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": "SIG_MPDS",
+    "SIGNAL_MOMENTUM_TOLERANCE": "SIG_MT",
+    "STOP_LOSS_PCT": "SL_PCT",
+    "TRAILING_STOP_PCT": "TS_PCT",
+    "TRAILING_SET_CALM_DOWN": "TS_CD",
+    "TAKE_PROFIT_PCT": "TP_PCT",
+    "BREAK_EVEN_STOP_PCT": "BE_PCT",
+    "BREAK_EVEN_BUFFER_PCT": "BE_BUF_PCT",
 }
 
 # Print-Flut: True => Bot-Prints werden unterdrückt (empfohlen)
@@ -438,7 +450,7 @@ def main():
 
     # CSV Header
     header_cols = [
-        "end_ts", "run", "total",
+        "run_time", "run", "total",
         "equity", "realized", "unrealized",
         "opens", "closes", "open_end"
     ] + list(PARAM_SPECS.keys())
@@ -448,18 +460,24 @@ def main():
 
     for i, combo in enumerate(combos, 1):
         params = {k: v for k, v in zip(keys, combo)}
-
         metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache)
+        
+        # Parameter-String für Konsole (nur die Keys aus PARAM_SPECS, in fester Reihenfolge)
+        parts = []
+        for k in PARAM_SPECS.keys():
+            abbr = PARAM_ABBR.get(k, k)
+            parts.append(f"{abbr}={fmt_de(params[k])}")
+        param_str = " ".join(parts)
 
-        ts_str = ts_ms_to_local_str(metrics["last_ts_ms"]) if metrics["last_ts_ms"] else "n/a"
 
         # Konsolen-Output (Ende Durchlauf)
+        run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
         saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
-        print(f"{ts_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str}")
+        print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | {param_str}")
 
         # CSV Zeile (deutsch formatiert)
         csv_vals = [
-            ts_str,
+            run_time_str,
             str(i),
             str(max_runs),
             fmt_de(metrics["equity"]),

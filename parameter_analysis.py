@@ -182,6 +182,30 @@ def merge_tick_streams(instruments: List[str], ticks_dir: Path) -> Iterable[Tupl
             heapq.heappush(heap, (ts2, epic, bid2, ask2))
 
 
+def merge_tick_streams_cached(instruments: List[str], ticks_cache: Dict[str, List[Tuple[int, float, float]]]) -> Iterable[Tuple[int, str, float, float]]:
+    # Multi-Instrument: Listen per Timestamp mergen, ohne Datei-I/O
+    heap = []
+    idx = {epic: 0 for epic in instruments}
+
+    for epic in instruments:
+        ticks = ticks_cache.get(epic, [])
+        if ticks:
+            ts, bid, ask = ticks[0]
+            heapq.heappush(heap, (ts, epic, bid, ask))
+
+    while heap:
+        ts, epic, bid, ask = heapq.heappop(heap)
+        yield ts, epic, bid, ask
+
+        idx[epic] += 1
+        i = idx[epic]
+        ticks = ticks_cache.get(epic, [])
+        if i < len(ticks):
+            ts2, bid2, ask2 = ticks[i]
+            heapq.heappush(heap, (ts2, epic, bid2, ask2))
+
+
+
 # ============================================================
 # Broker-Stubs (keine API)
 # ============================================================
@@ -289,7 +313,7 @@ def ts_ms_to_local_str(ts_ms: int) -> str:
     dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(bot.LOCAL_TZ)
     return dt.strftime("%d.%m.%Y %H:%M:%S")
 
-def run_single_backtest(instruments: List[str], params: Dict[str, Any]) -> Dict[str, Any]:
+def run_single_backtest(instruments: List[str], params: Dict[str, Any], ticks_cache: Dict[str, List[Tuple[int, float, float]]]) -> Dict[str, Any]:
     broker = BacktestBroker()
     reset_bot_state(instruments, broker)
     patch_bot_for_backtest(broker)
@@ -312,7 +336,7 @@ def run_single_backtest(instruments: List[str], params: Dict[str, Any]) -> Dict[
     cm = contextlib.redirect_stdout(out_buf) if SUPPRESS_BOT_OUTPUT else contextlib.nullcontext()
 
     with cm:
-        for ts_ms, epic, bid, ask in merge_tick_streams(instruments, TICKS_DIR):
+        for ts_ms, epic, bid, ask in merge_tick_streams_cached(instruments, ticks_cache):
             last_ts = ts_ms
             set_bot_time(ts_ms)
             broker.set_last_price(epic, bid, ask, ts_ms)
@@ -409,6 +433,9 @@ def main():
     keys, combos = build_param_grid(PARAM_SPECS)
     max_runs = len(combos)
 
+    # Tickdaten einmalig laden (Cache)
+    ticks_cache = {epic: load_ticks_for_instrument(epic, TICKS_DIR) for epic in INSTRUMENTS}
+
     # CSV Header
     header_cols = [
         "end_ts", "run", "total",
@@ -422,7 +449,7 @@ def main():
     for i, combo in enumerate(combos, 1):
         params = {k: v for k, v in zip(keys, combo)}
 
-        metrics = run_single_backtest(INSTRUMENTS, params)
+        metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache)
 
         ts_str = ts_ms_to_local_str(metrics["last_ts_ms"]) if metrics["last_ts_ms"] else "n/a"
 

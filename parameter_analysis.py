@@ -148,7 +148,7 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, Any, Any]]) -> Tuple[List
 # Format: ts_ms;bid;ask
 # ============================================================
 
-def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, float, float]]:
+def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, float, float, int]]:
     fn = ticks_dir / f"ticks_{epic}.csv"
     if not fn.exists():
         raise FileNotFoundError(f"Tick-Datei fehlt: {fn}")
@@ -163,38 +163,19 @@ def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, flo
             if len(parts) < 3:
                 continue
             ts_ms = int(parts[0])
+            dt_floor = bot.local_minute_floor(ts_ms)          # 1x teuer, aber nur beim Laden
+            minute_key = int(dt_floor.timestamp() // 60)      # Integer-Minute
             bid = float(parts[1])
             ask = float(parts[2])
-            out.append((ts_ms, bid, ask))
+            out.append((ts_ms, bid, ask, minute_key))
     out.sort(key=lambda x: x[0])
     return out
 
+def merge_tick_streams_cached(
+    instruments: List[str],
+    ticks_cache: Dict[str, List[Tuple[int, float, float, int]]]
+) -> Iterable[Tuple[int, str, float, float, int]]:
 
-def merge_tick_streams(instruments: List[str], ticks_dir: Path) -> Iterable[Tuple[int, str, float, float]]:
-    # Multi-Instrument-Flexibilität: Streams nach Timestamp mergen
-    streams = {}
-    for epic in instruments:
-        ticks = load_ticks_for_instrument(epic, ticks_dir)
-        streams[epic] = ticks
-
-    heap = []
-    idx = {epic: 0 for epic in instruments}
-    for epic in instruments:
-        if streams[epic]:
-            ts, bid, ask = streams[epic][0]
-            heapq.heappush(heap, (ts, epic, bid, ask))
-
-    while heap:
-        ts, epic, bid, ask = heapq.heappop(heap)
-        yield (ts, epic, bid, ask)
-        idx[epic] += 1
-        i = idx[epic]
-        if i < len(streams[epic]):
-            ts2, bid2, ask2 = streams[epic][i]
-            heapq.heappush(heap, (ts2, epic, bid2, ask2))
-
-
-def merge_tick_streams_cached(instruments: List[str], ticks_cache: Dict[str, List[Tuple[int, float, float]]]) -> Iterable[Tuple[int, str, float, float]]:
     # Multi-Instrument: Listen per Timestamp mergen, ohne Datei-I/O
     heap = []
     idx = {epic: 0 for epic in instruments}
@@ -202,20 +183,19 @@ def merge_tick_streams_cached(instruments: List[str], ticks_cache: Dict[str, Lis
     for epic in instruments:
         ticks = ticks_cache.get(epic, [])
         if ticks:
-            ts, bid, ask = ticks[0]
-            heapq.heappush(heap, (ts, epic, bid, ask))
+            ts, bid, ask, mkey = ticks[0]
+            heapq.heappush(heap, (ts, epic, bid, ask, mkey))
 
     while heap:
-        ts, epic, bid, ask = heapq.heappop(heap)
-        yield ts, epic, bid, ask
+        ts, epic, bid, ask, mkey = heapq.heappop(heap)
+        yield ts, epic, bid, ask, mkey
 
         idx[epic] += 1
         i = idx[epic]
         ticks = ticks_cache.get(epic, [])
         if i < len(ticks):
-            ts2, bid2, ask2 = ticks[i]
-            heapq.heappush(heap, (ts2, epic, bid2, ask2))
-
+            ts2, bid2, ask2, mkey2 = ticks[i]
+            heapq.heappush(heap, (ts2, epic, bid2, ask2, mkey2))
 
 
 # ============================================================
@@ -325,7 +305,12 @@ def ts_ms_to_local_str(ts_ms: int) -> str:
     dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(bot.LOCAL_TZ)
     return dt.strftime("%d.%m.%Y %H:%M:%S")
 
-def run_single_backtest(instruments: List[str], params: Dict[str, Any], ticks_cache: Dict[str, List[Tuple[int, float, float]]]) -> Dict[str, Any]:
+def run_single_backtest(
+    instruments: List[str],
+    params: Dict[str, Any],
+    ticks_cache: Dict[str, List[Tuple[int, float, float, int]]]
+) -> Dict[str, Any]:
+
     broker = BacktestBroker()
     reset_bot_state(instruments, broker)
     patch_bot_for_backtest(broker)
@@ -348,7 +333,7 @@ def run_single_backtest(instruments: List[str], params: Dict[str, Any], ticks_ca
     cm = contextlib.redirect_stdout(out_buf) if SUPPRESS_BOT_OUTPUT else contextlib.nullcontext()
 
     with cm:
-        for ts_ms, epic, bid, ask in merge_tick_streams_cached(instruments, ticks_cache):
+        for ts_ms, epic, bid, ask, minute_key in merge_tick_streams_cached(instruments, ticks_cache):
             last_ts = ts_ms
             set_bot_time(ts_ms)
             broker.set_last_price(epic, bid, ask, ts_ms)
@@ -359,7 +344,7 @@ def run_single_backtest(instruments: List[str], params: Dict[str, Any], ticks_ca
                 pos["last_tick_ms"] = ts_ms
 
             st = states[epic]
-            minute_key = bot.local_minute_floor(ts_ms)
+            # minute_key = bot.local_minute_floor(ts_ms)
 
             if st["minute"] != minute_key and st["bar"] is not None:
                 # Minute abgeschlossen

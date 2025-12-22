@@ -16,6 +16,10 @@ import pstats
 # KONFIG (im Code, keine CLI)
 # ============================================================
 
+# Laufzeit Tracking an-/ausschalten
+ENABLE_PROFILING = False   # für Laufzeit Tracking, bei Bedarf False
+PROFILE_OUT_FILE = Path(__file__).resolve().parent / "profile.txt"
+
 INSTRUMENTS = ["ETHUSD"]  # später z.B. ["ETHUSD", "BTCUSD"]
 
 # Tick-Dateien liegen hier:
@@ -58,6 +62,8 @@ PARAM_ABBR = {
 # Print-Flut: True => Bot-Prints werden unterdrückt (empfohlen)
 SUPPRESS_BOT_OUTPUT = True
 
+# Backtest-Speed: on_candle_forming ist sehr teuer (HMA/WMA) und für Entries i.d.R. nicht nötig
+BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = schnell
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
@@ -387,10 +393,13 @@ def run_single_backtest(
                     b["ticks"] += 1
                     b["timestamp"] = ts_ms
 
-                # während der Minute forming + Schutzregeln wie im Bot-Loop
-                bot.on_candle_forming(epic, st["bar"], ts_ms)
+                # während der Minute: forming ist optional (sehr teuer wegen HMA/WMA)
+                if BACKTEST_CALL_ON_CANDLE_FORMING:
+                    bot.on_candle_forming(epic, st["bar"], ts_ms)
+
                 spread = ask - bid
                 bot.check_protection_rules(epic, bid, ask, spread, CST=None, XSEC=None)
+
 
         # --- NEU: am Ende Positionen zwangs-schließen (fairer Vergleich) ---
         if FORCE_CLOSE_OPEN_POSITIONS_AT_END:
@@ -480,4 +489,15 @@ def main():
 
         
 if __name__ == "__main__":
-    main()
+    if ENABLE_PROFILING:
+        pr = cProfile.Profile()
+        pr.enable()
+        main()
+        pr.disable()
+
+        with open(PROFILE_OUT_FILE, "w", encoding="utf-8") as f:
+            stats = pstats.Stats(pr, stream=f).sort_stats("cumtime")
+            stats.print_stats(40)  # Top 40 nach kumulativer Zeit
+        print(f"cProfile geschrieben: {PROFILE_OUT_FILE}")
+    else:
+        main()

@@ -21,7 +21,9 @@ INSTRUMENTS = ["ETHUSD"]  # später z.B. ["ETHUSD", "BTCUSD"]
 TICKS_DIR = Path(__file__).resolve().parent / "ticks"
 
 # Ergebnis-Datei
-RESULTS_FILE = Path(__file__).resolve().parent / "results.txt"
+RESULTS_CSV_FILE = Path(__file__).resolve().parent / "results.csv"
+
+FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 
 # Parameter-Spezifikation:
 # band=0 oder step=0 => keine Variation
@@ -71,6 +73,11 @@ def _decimals_from_step(step: float) -> int:
     if "." in s:
         return len(s.split(".")[1])
     return 0
+def fmt_de(x) -> str:
+    # float -> deutsches Dezimal-Komma; int bleibt int
+    if isinstance(x, float):
+        return f"{x:.6f}".replace(".", ",")
+    return str(x)
 
 def float_range_centered(start: float, band: float, step: float) -> List[float]:
     # band=0 oder step=0 => nur start
@@ -256,7 +263,7 @@ def set_bot_params(params: Dict[str, Any]):
 
 def reset_bot_state(instruments: List[str], broker: BacktestBroker):
     bot.INSTRUMENTS = list(instruments)
-    bot.open_positions = {epic: None for epic in instruments}  # :contentReference[oaicite:5]{index=5}
+    bot.open_positions = {epic: None for epic in instruments}
     bot.candle_history = {epic: bot.deque(maxlen=5000) for epic in instruments}
     bot.TICK_RING = {}
     bot._last_dirlog_sec = {}
@@ -362,6 +369,12 @@ def run_single_backtest(instruments: List[str], params: Dict[str, Any]) -> Dict[
                 spread = ask - bid
                 bot.check_protection_rules(epic, bid, ask, spread, CST=None, XSEC=None)
 
+        # --- NEU: am Ende Positionen zwangs-schließen (fairer Vergleich) ---
+        if FORCE_CLOSE_OPEN_POSITIONS_AT_END:
+            for epic in instruments:
+                if isinstance(bot.open_positions.get(epic), dict):
+                    broker.close_position(CST=None, XSEC=None, epic=epic)
+
         # am Ende: Equity = realized + unrealized (falls Position offen)
         unrealized = 0.0
         open_count = 0
@@ -396,7 +409,15 @@ def main():
     keys, combos = build_param_grid(PARAM_SPECS)
     max_runs = len(combos)
 
-    RESULTS_FILE.write_text("", encoding="utf-8")
+    # CSV Header
+    header_cols = [
+        "end_ts", "run", "total",
+        "equity", "realized", "unrealized",
+        "opens", "closes", "open_end"
+    ] + list(PARAM_SPECS.keys())
+
+    with open(RESULTS_CSV_FILE, "w", encoding="utf-8", newline="") as f:
+        f.write(";".join(header_cols) + "\n")
 
     for i, combo in enumerate(combos, 1):
         params = {k: v for k, v in zip(keys, combo)}
@@ -406,18 +427,25 @@ def main():
         ts_str = ts_ms_to_local_str(metrics["last_ts_ms"]) if metrics["last_ts_ms"] else "n/a"
 
         # Konsolen-Output (Ende Durchlauf)
-        print(f"{ts_str} | Durchlauf {i}/{max_runs} | Saldo={metrics['equity']:.2f}")
+        saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
+        print(f"{ts_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str}")
 
-        # Datei-Output (erweiterbar, aber schon gut parsebar)
-        line = (
-            f"{ts_str};{i};{max_runs};"
-            f"equity={metrics['equity']:.6f};realized={metrics['realized']:.6f};unrealized={metrics['unrealized']:.6f};"
-            f"opens={metrics['opens']};closes={metrics['closes']};open_end={metrics['open_positions_end']};"
-            f"params={params}\n"
-        )
-        with open(RESULTS_FILE, "a", encoding="utf-8") as f:
-            f.write(line)
+        # CSV Zeile (deutsch formatiert)
+        csv_vals = [
+            ts_str,
+            str(i),
+            str(max_runs),
+            fmt_de(metrics["equity"]),
+            fmt_de(metrics["realized"]),
+            fmt_de(metrics["unrealized"]),
+            str(metrics["opens"]),
+            str(metrics["closes"]),
+            str(metrics["open_positions_end"]),
+        ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
 
+        with open(RESULTS_CSV_FILE, "a", encoding="utf-8", newline="") as f:
+            f.write(";".join(csv_vals) + "\n")
 
+        
 if __name__ == "__main__":
     main()

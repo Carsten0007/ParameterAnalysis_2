@@ -1,0 +1,423 @@
+import sys
+import itertools
+import contextlib
+import io
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Dict, List, Tuple, Any, Iterable, Optional
+import heapq
+
+
+# ============================================================
+# KONFIG (im Code, keine CLI)
+# ============================================================
+
+INSTRUMENTS = ["ETHUSD"]  # später z.B. ["ETHUSD", "BTCUSD"]
+
+# Tick-Dateien liegen hier:
+# ParameterAnalysis\ticks\ticks_ETHUSD.csv
+TICKS_DIR = Path(__file__).resolve().parent / "ticks"
+
+# Ergebnis-Datei
+RESULTS_FILE = Path(__file__).resolve().parent / "results.txt"
+
+# Parameter-Spezifikation:
+# band=0 oder step=0 => keine Variation
+PARAM_SPECS = {
+    "EMA_FAST": (5, 0, 0),     # (start, band, step)  int
+    "EMA_SLOW": (21, 0, 0),    # int
+
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": (4.0, 0.0, 0.0),  # float
+    "SIGNAL_MOMENTUM_TOLERANCE": (1.2, 0.0, 0.0),          # float
+    "STOP_LOSS_PCT": (0.0050, 0.0, 0.0),                   # float
+    "TRAILING_STOP_PCT": (0.0035, 0.0010, 0.0001),        # float (dein Beispiel)
+    "TRAILING_SET_CALM_DOWN": (0.5000, 0.0, 0.0),            # im Bot vorhanden? falls ja: float
+    "TAKE_PROFIT_PCT": (0.0060, 0.0, 0.0),                 # float
+    "BREAK_EVEN_STOP_PCT": (0.0010, 0.0, 0.0),            # float
+    "BREAK_EVEN_BUFFER_PCT": (0.0005, 0.0, 0.0),          # float
+}
+
+# Print-Flut: True => Bot-Prints werden unterdrückt (empfohlen)
+SUPPRESS_BOT_OUTPUT = True
+
+
+# ============================================================
+# Import TradingBot aus Nachbarordner (ohne Kopie)
+# ============================================================
+
+THIS_DIR = Path(__file__).resolve().parent
+TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot"  # passt bei deiner Struktur
+
+if not TRADINGBOT_DIR.exists():
+    raise FileNotFoundError(f"TradingBot-Verzeichnis nicht gefunden: {TRADINGBOT_DIR}")
+
+# Wichtig: Script-Dir soll zuerst kommen, damit unser Stub chart_gui.py greift.
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(TRADINGBOT_DIR) not in sys.path:
+    sys.path.insert(1, str(TRADINGBOT_DIR))
+
+import tradeingbot as bot  # nutzt die Bot-Logik 1:1
+
+
+# ============================================================
+# Helpers: Param-Grid
+# ============================================================
+
+def _decimals_from_step(step: float) -> int:
+    s = f"{step:.20f}".rstrip("0")
+    if "." in s:
+        return len(s.split(".")[1])
+    return 0
+
+def float_range_centered(start: float, band: float, step: float) -> List[float]:
+    # band=0 oder step=0 => nur start
+    if band == 0 or step == 0:
+        return [float(start)]
+
+    d_start = Decimal(str(start))
+    d_band  = Decimal(str(band))
+    d_step  = Decimal(str(step))
+
+    lo = d_start - d_band
+    hi = d_start + d_band
+
+    n = int(((hi - lo) / d_step).to_integral_value(rounding=ROUND_HALF_UP))
+    vals = []
+    for i in range(n + 1):
+        v = lo + d_step * Decimal(i)
+        if v < lo or v > hi:
+            continue
+        vals.append(v)
+
+    # Rundung stabilisieren
+    decs = _decimals_from_step(step)
+    q = Decimal("1." + ("0" * decs)) if decs > 0 else Decimal("1")
+    out = []
+    for v in vals:
+        out.append(float(v.quantize(q, rounding=ROUND_HALF_UP)))
+    # Duplikate entfernen (Rundungsartefakte)
+    out = sorted(set(out))
+    return out
+
+def int_range_centered(start: int, band: int, step: int) -> List[int]:
+    if band == 0 or step == 0:
+        return [int(start)]
+    lo = start - band
+    hi = start + band
+    vals = list(range(lo, hi + 1, step))
+    return vals
+
+
+def build_param_grid(param_specs: Dict[str, Tuple[Any, Any, Any]]) -> Tuple[List[str], List[Tuple[Any, ...]]]:
+    keys = list(param_specs.keys())
+    value_lists = []
+    for k in keys:
+        start, band, step = param_specs[k]
+        if isinstance(start, int) and isinstance(band, int) and isinstance(step, int):
+            value_lists.append(int_range_centered(start, band, step))
+        else:
+            value_lists.append(float_range_centered(float(start), float(band), float(step)))
+    combos = list(itertools.product(*value_lists))
+    return keys, combos
+
+
+# ============================================================
+# Tick Loader (pro Instrument: ticks_<EPIC>.csv)
+# Format: ts_ms;bid;ask
+# ============================================================
+
+def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, float, float]]:
+    fn = ticks_dir / f"ticks_{epic}.csv"
+    if not fn.exists():
+        raise FileNotFoundError(f"Tick-Datei fehlt: {fn}")
+
+    out = []
+    with open(fn, "r", encoding="utf-8") as f:
+        for line_no, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(";")
+            if len(parts) < 3:
+                continue
+            ts_ms = int(parts[0])
+            bid = float(parts[1])
+            ask = float(parts[2])
+            out.append((ts_ms, bid, ask))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def merge_tick_streams(instruments: List[str], ticks_dir: Path) -> Iterable[Tuple[int, str, float, float]]:
+    # Multi-Instrument-Flexibilität: Streams nach Timestamp mergen
+    streams = {}
+    for epic in instruments:
+        ticks = load_ticks_for_instrument(epic, ticks_dir)
+        streams[epic] = ticks
+
+    heap = []
+    idx = {epic: 0 for epic in instruments}
+    for epic in instruments:
+        if streams[epic]:
+            ts, bid, ask = streams[epic][0]
+            heapq.heappush(heap, (ts, epic, bid, ask))
+
+    while heap:
+        ts, epic, bid, ask = heapq.heappop(heap)
+        yield (ts, epic, bid, ask)
+        idx[epic] += 1
+        i = idx[epic]
+        if i < len(streams[epic]):
+            ts2, bid2, ask2 = streams[epic][i]
+            heapq.heappush(heap, (ts2, epic, bid2, ask2))
+
+
+# ============================================================
+# Broker-Stubs (keine API)
+# ============================================================
+
+@dataclass
+class DummyResponse:
+    status_code: int = 200
+    text: str = "OK"
+
+
+class BacktestBroker:
+    def __init__(self):
+        self.realized_pnl = 0.0
+        self.opens = 0
+        self.closes = 0
+        self.last_price: Dict[str, Tuple[float, float, int]] = {}  # epic -> (bid, ask, ts)
+
+    def set_last_price(self, epic: str, bid: float, ask: float, ts_ms: int):
+        self.last_price[epic] = (bid, ask, ts_ms)
+
+    def open_position(self, CST, XSEC, epic, direction, size, entry_price, retry=True):
+        # 1:1-Struktur wie Bot erwartet (open_positions[epic] Dict)
+        self.opens += 1
+        deal_id = f"BT_{self.opens}"
+        # entry_price wird vom Bot marktseitig korrekt übergeben
+        bot.open_positions[epic] = {
+            "direction": direction,
+            "dealId": deal_id,
+            "entry_price": float(entry_price),
+            "size": float(size),
+            "trailing_stop": None,
+            "break_even_active": False,
+        }
+        return DummyResponse()
+
+    def close_position(self, CST, XSEC, epic, deal_id=None, retry=True):
+        pos = bot.open_positions.get(epic)
+        if not isinstance(pos, dict):
+            return DummyResponse()
+
+        direction = pos.get("direction")
+        entry = float(pos.get("entry_price") or 0.0)
+        size = float(pos.get("size") or 0.0)
+
+        bid, ask, _ = self.last_price.get(epic, (None, None, None))
+        if bid is None or ask is None:
+            # ohne Preis keine sinnvolle Realisierung
+            bot.open_positions[epic] = None
+            self.closes += 1
+            return DummyResponse()
+
+        # Marktseitig korrektes Schließen:
+        # BUY  -> Exit auf Bid
+        # SELL -> Exit auf Ask
+        if direction == "BUY":
+            exit_price = bid
+            pnl = (exit_price - entry) * size
+        else:
+            exit_price = ask
+            pnl = (entry - exit_price) * size
+
+        self.realized_pnl += pnl
+        self.closes += 1
+        bot.open_positions[epic] = None
+        return DummyResponse()
+
+    def get_positions(self, CST, XSEC):
+        return []
+
+
+# ============================================================
+# Backtest-Replay: Bot-Loop nachbauen (ohne WebSocket)
+# ============================================================
+
+def set_bot_params(params: Dict[str, Any]):
+    # setzt Bot-Globals (keine neue Strategie-Logik)
+    for k, v in params.items():
+        setattr(bot, k, v)
+
+def reset_bot_state(instruments: List[str], broker: BacktestBroker):
+    bot.INSTRUMENTS = list(instruments)
+    bot.open_positions = {epic: None for epic in instruments}  # :contentReference[oaicite:5]{index=5}
+    bot.candle_history = {epic: bot.deque(maxlen=5000) for epic in instruments}
+    bot.TICK_RING = {}
+    bot._last_dirlog_sec = {}
+    bot._last_close_ts = {}
+    bot._last_ticklog_sec = {}
+
+    broker.realized_pnl = 0.0
+    broker.opens = 0
+    broker.closes = 0
+    broker.last_price = {}
+
+def patch_bot_for_backtest(broker: BacktestBroker):
+    # API-Funktionen auf Stub umbiegen
+    bot.open_position = broker.open_position
+    bot.close_position = broker.close_position
+    bot.get_positions = broker.get_positions
+
+    # Zeitfunktionen innerhalb des Bot-Moduls werden im Replay gesetzt (tick-basiert).
+    # Hier nur Platzhalter; im Replay pro Tick aktualisieren wir "bot.time.time" / "bot.time.monotonic".
+    pass
+
+def ts_ms_to_local_str(ts_ms: int) -> str:
+    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(bot.LOCAL_TZ)
+    return dt.strftime("%d.%m.%Y %H:%M:%S")
+
+def run_single_backtest(instruments: List[str], params: Dict[str, Any]) -> Dict[str, Any]:
+    broker = BacktestBroker()
+    reset_bot_state(instruments, broker)
+    patch_bot_for_backtest(broker)
+    set_bot_params(params)
+
+    # Candle-States wie im Bot-Loop
+    states = {epic: {"minute": None, "bar": None} for epic in instruments}
+
+    # deterministische „Zeit“ im Bot:
+    # - time.time()   -> ts in Sekunden (UTC ist egal, es geht nur um Throttle)
+    # - time.monotonic() -> wir verwenden ebenfalls ts in Sekunden, reicht für Cooldown/Delta
+    def set_bot_time(ts_ms: int):
+        t_sec = ts_ms / 1000.0
+        bot.time.time = lambda: t_sec
+        bot.time.monotonic = lambda: t_sec
+
+    last_ts = None
+
+    out_buf = io.StringIO()
+    cm = contextlib.redirect_stdout(out_buf) if SUPPRESS_BOT_OUTPUT else contextlib.nullcontext()
+
+    with cm:
+        for ts_ms, epic, bid, ask in merge_tick_streams(instruments, TICKS_DIR):
+            last_ts = ts_ms
+            set_bot_time(ts_ms)
+            broker.set_last_price(epic, bid, ask, ts_ms)
+
+            # Update last_tick_ms wie im Live-Loop (für Logik/Throttle)
+            pos = bot.open_positions.get(epic)
+            if isinstance(pos, dict):
+                pos["last_tick_ms"] = ts_ms
+
+            st = states[epic]
+            minute_key = bot.local_minute_floor(ts_ms)
+
+            if st["minute"] != minute_key and st["bar"] is not None:
+                # Minute abgeschlossen
+                bar_to_close = st["bar"]
+                bot.on_candle_close(epic, bar_to_close)
+
+                # neue Minute starten
+                st["minute"] = minute_key
+                st["bar"] = {
+                    "open_bid": bid, "open_ask": ask,
+                    "high_bid": bid, "low_bid": bid,
+                    "high_ask": ask, "low_ask": ask,
+                    "close_bid": bid, "close_ask": ask,
+                    "ticks": 1,
+                    "timestamp": ts_ms
+                }
+            else:
+                # Neue Candle starten, falls noch keine existiert
+                if st["minute"] is None:
+                    st["minute"] = minute_key
+                    st["bar"] = {
+                        "open_bid": bid, "open_ask": ask,
+                        "high_bid": bid, "low_bid": bid,
+                        "high_ask": ask, "low_ask": ask,
+                        "close_bid": bid, "close_ask": ask,
+                        "ticks": 1,
+                        "timestamp": ts_ms
+                    }
+                else:
+                    # Laufende Candle aktualisieren
+                    b = st["bar"]
+                    b["high_bid"] = max(b["high_bid"], bid)
+                    b["low_bid"] = min(b["low_bid"], bid)
+                    b["close_bid"] = bid
+                    b["high_ask"] = max(b["high_ask"], ask)
+                    b["low_ask"] = min(b["low_ask"], ask)
+                    b["close_ask"] = ask
+                    b["ticks"] += 1
+                    b["timestamp"] = ts_ms
+
+                # während der Minute forming + Schutzregeln wie im Bot-Loop
+                bot.on_candle_forming(epic, st["bar"], ts_ms)
+                spread = ask - bid
+                bot.check_protection_rules(epic, bid, ask, spread, CST=None, XSEC=None)
+
+        # am Ende: Equity = realized + unrealized (falls Position offen)
+        unrealized = 0.0
+        open_count = 0
+        for epic in instruments:
+            pos = bot.open_positions.get(epic)
+            if isinstance(pos, dict):
+                open_count += 1
+                direction = pos.get("direction")
+                entry = float(pos.get("entry_price") or 0.0)
+                size = float(pos.get("size") or 0.0)
+                bid, ask, _ = broker.last_price.get(epic, (None, None, None))
+                if bid is not None and ask is not None:
+                    if direction == "BUY":
+                        unrealized += (bid - entry) * size
+                    else:
+                        unrealized += (entry - ask) * size
+
+    equity = broker.realized_pnl + unrealized
+
+    return {
+        "last_ts_ms": last_ts,
+        "equity": equity,
+        "realized": broker.realized_pnl,
+        "unrealized": unrealized,
+        "opens": broker.opens,
+        "closes": broker.closes,
+        "open_positions_end": open_count,
+    }
+
+
+def main():
+    keys, combos = build_param_grid(PARAM_SPECS)
+    max_runs = len(combos)
+
+    RESULTS_FILE.write_text("", encoding="utf-8")
+
+    for i, combo in enumerate(combos, 1):
+        params = {k: v for k, v in zip(keys, combo)}
+
+        metrics = run_single_backtest(INSTRUMENTS, params)
+
+        ts_str = ts_ms_to_local_str(metrics["last_ts_ms"]) if metrics["last_ts_ms"] else "n/a"
+
+        # Konsolen-Output (Ende Durchlauf)
+        print(f"{ts_str} | Durchlauf {i}/{max_runs} | Saldo={metrics['equity']:.2f}")
+
+        # Datei-Output (erweiterbar, aber schon gut parsebar)
+        line = (
+            f"{ts_str};{i};{max_runs};"
+            f"equity={metrics['equity']:.6f};realized={metrics['realized']:.6f};unrealized={metrics['unrealized']:.6f};"
+            f"opens={metrics['opens']};closes={metrics['closes']};open_end={metrics['open_positions_end']};"
+            f"params={params}\n"
+        )
+        with open(RESULTS_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+
+
+if __name__ == "__main__":
+    main()

@@ -35,15 +35,15 @@ FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 # band=0 oder step=0 => keine Variation
 PARAM_SPECS = {
     "EMA_FAST":                             (10, 0, 0),     # int (!) (start, band, step)  int
-    "EMA_SLOW":                             (30, 0, 0),    # int (!)
+    "EMA_SLOW":                             (30, 1, 1),    # int (!)
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000),  # float
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 0.0000, 0.0000),          # float
     "STOP_LOSS_PCT":                        (0.0070, 0.0000, 0.0000),                   # fester Stop-Loss
     "TRAILING_STOP_PCT":                    (0.0075, 0.0000, 0.0000),        # Trailing Stop
     "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),            # Filter für Trailing-Nachzie-Schwelle (spread*TRAILING_SET_CALM_DOWN)
     "TAKE_PROFIT_PCT":                      (0.0060, 0.0000, 0.0000),                 # z. B. 0,2% Gewinnziel
-    "BREAK_EVEN_STOP_PCT":                  (0.0020, 0.0020, 0.0005),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
-    "BREAK_EVEN_BUFFER_PCT":                (0.0004, 0.0004, 0.0001),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
+    "BREAK_EVEN_STOP_PCT":                  (0.0030, 0.0000, 0.0000),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
+    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
 }
 
 PARAM_ABBR = {

@@ -34,16 +34,16 @@ FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 # Parameter-Spezifikation:
 # band=0 oder step=0 => keine Variation
 PARAM_SPECS = {
-    "EMA_FAST": (5, 0, 0),     # (start, band, step)  int
-    "EMA_SLOW": (21, 0, 0),    # int
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": (4.0, 0.0, 0.0),  # float
-    "SIGNAL_MOMENTUM_TOLERANCE": (1.2, 0.0, 0.0),          # float
-    "STOP_LOSS_PCT": (0.0050, 0.0, 0.0),                   # float
-    "TRAILING_STOP_PCT": (0.0035, 0.0010, 0.0001),        # float (dein Beispiel)
-    "TRAILING_SET_CALM_DOWN": (0.5000, 0.0, 0.0),            # im Bot vorhanden? falls ja: float
-    "TAKE_PROFIT_PCT": (0.0060, 0.0, 0.0),                 # float
-    "BREAK_EVEN_STOP_PCT": (0.0010, 0.0, 0.0),            # float
-    "BREAK_EVEN_BUFFER_PCT": (0.0005, 0.0, 0.0),          # float
+    "EMA_FAST":                             (10, 0, 0),     # int (!) (start, band, step)  int
+    "EMA_SLOW":                             (30, 0, 0),    # int (!)
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000),  # float
+    "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 0.0000, 0.0000),          # float
+    "STOP_LOSS_PCT":                        (0.0070, 0.0000, 0.0000),                   # fester Stop-Loss
+    "TRAILING_STOP_PCT":                    (0.0075, 0.0000, 0.0000),        # Trailing Stop
+    "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),            # Filter für Trailing-Nachzie-Schwelle (spread*TRAILING_SET_CALM_DOWN)
+    "TAKE_PROFIT_PCT":                      (0.0060, 0.0000, 0.0000),                 # z. B. 0,2% Gewinnziel
+    "BREAK_EVEN_STOP_PCT":                  (0.0020, 0.0020, 0.0005),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
+    "BREAK_EVEN_BUFFER_PCT":                (0.0004, 0.0004, 0.0001),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
 }
 
 PARAM_ABBR = {
@@ -469,7 +469,7 @@ def main():
         # Konsolen-Output (Ende Durchlauf)
         run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
         saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
-        print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | {param_str}")
+        print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | Trades={metrics['closes']} | {param_str}")
 
         # CSV Zeile (deutsch formatiert)
         csv_vals = [

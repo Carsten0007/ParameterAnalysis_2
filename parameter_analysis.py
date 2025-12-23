@@ -10,6 +10,9 @@ from typing import Dict, List, Tuple, Any, Iterable, Optional
 import heapq
 import cProfile
 import pstats
+import os
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 # ============================================================
@@ -31,19 +34,26 @@ RESULTS_CSV_FILE = Path(__file__).resolve().parent / "results.csv"
 
 FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 
+# Parallelisierung
+ENABLE_PARALLEL = True
+MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
+# Parallelisierung: maximale Anzahl gleichzeitig "in flight" laufender Runs
+MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
+
+
 # Parameter-Spezifikation:
 # band=0 oder step=0 => keine Variation
 PARAM_SPECS = {
-    "EMA_FAST":                             (10, 0, 0),     # int (!) (start, band, step)  int
-    "EMA_SLOW":                             (30, 1, 1),    # int (!)
+    "EMA_FAST":                             (10, 3, 3),     # int (!) (start, band, step)  int
+    "EMA_SLOW":                             (30, 5, 5),    # int (!)
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000),  # float
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 0.0000, 0.0000),          # float
-    "STOP_LOSS_PCT":                        (0.0070, 0.0000, 0.0000),                   # fester Stop-Loss
-    "TRAILING_STOP_PCT":                    (0.0075, 0.0000, 0.0000),        # Trailing Stop
+    "STOP_LOSS_PCT":                        (0.0070, 0.0020, 0.0020),                   # fester Stop-Loss
+    "TRAILING_STOP_PCT":                    (0.0075, 0.0060, 0.0020),        # Trailing Stop
     "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),            # Filter für Trailing-Nachzie-Schwelle (spread*TRAILING_SET_CALM_DOWN)
-    "TAKE_PROFIT_PCT":                      (0.0060, 0.0000, 0.0000),                 # z. B. 0,2% Gewinnziel
-    "BREAK_EVEN_STOP_PCT":                  (0.0030, 0.0000, 0.0000),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
-    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
+    "TAKE_PROFIT_PCT":                      (0.0060, 0.0020, 0.0020),                 # z. B. 0,2% Gewinnziel
+    "BREAK_EVEN_STOP_PCT":                  (0.0030, 0.0020, 0.0010),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
+    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0002, 0.0001),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
 }
 
 PARAM_ABBR = {
@@ -150,6 +160,23 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, Any, Any]]) -> Tuple[List
     combos = list(itertools.product(*value_lists))
     return keys, combos
 
+
+# ============================================================
+# Worker-Cache + Worker-Funktionen
+# ============================================================
+
+_WORKER_TICKS_CACHE = None
+_WORKER_INSTRUMENTS = None
+
+def _worker_init(instruments, ticks_dir):
+    global _WORKER_TICKS_CACHE, _WORKER_INSTRUMENTS
+    _WORKER_INSTRUMENTS = list(instruments)
+    # Jeder Worker lädt Tickdaten 1x und behält sie für alle Runs
+    _WORKER_TICKS_CACHE = {epic: load_ticks_for_instrument(epic, ticks_dir) for epic in _WORKER_INSTRUMENTS}
+
+def _worker_run(run_id, params):
+    metrics = run_single_backtest(_WORKER_INSTRUMENTS, params, _WORKER_TICKS_CACHE)
+    return run_id, metrics, params
 
 # ============================================================
 # Tick Loader (pro Instrument: ticks_<EPIC>.csv)
@@ -441,9 +468,6 @@ def main():
     keys, combos = build_param_grid(PARAM_SPECS)
     max_runs = len(combos)
 
-    # Tickdaten einmalig laden (Cache)
-    ticks_cache = {epic: load_ticks_for_instrument(epic, TICKS_DIR) for epic in INSTRUMENTS}
-
     # CSV Header
     header_cols = [
         "run_time", "run", "total",
@@ -451,44 +475,141 @@ def main():
         "opens", "closes", "open_end"
     ] + list(PARAM_SPECS.keys())
 
-    with open(RESULTS_CSV_FILE, "w", encoding="utf-8", newline="") as f:
-        f.write(";".join(header_cols) + "\n")
+    with open(RESULTS_CSV_FILE, "w", encoding="utf-8", newline="") as f_csv:
+        f_csv.write(";".join(header_cols) + "\n")
 
-    for i, combo in enumerate(combos, 1):
-        params = {k: v for k, v in zip(keys, combo)}
-        metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache)
-        
-        # Parameter-String für Konsole (nur die Keys aus PARAM_SPECS, in fester Reihenfolge)
-        parts = []
-        for k in PARAM_SPECS.keys():
-            abbr = PARAM_ABBR.get(k, k)
-            parts.append(f"{abbr}={fmt_de(params[k])}")
-        param_str = " ".join(parts)
+        # -----------------------------
+        # PARALLEL
+        # -----------------------------
+        if ENABLE_PARALLEL:
+            import os
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
+            # Worker-Anzahl
+            cpu = os.cpu_count() or 1
+            workers = MAX_WORKERS if (MAX_WORKERS and MAX_WORKERS > 0) else max(1, cpu - 1)
+            inflight_target = MAX_INFLIGHT if (MAX_INFLIGHT and MAX_INFLIGHT > 0) else workers * 2
 
-        # Konsolen-Output (Ende Durchlauf)
-        run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-        saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
-        print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | Trades={metrics['closes']} | {param_str}")
+            # Helper: formatiert Parameter kurz für Konsole
+            def _param_str(params: Dict[str, Any]) -> str:
+                parts = []
+                for k in PARAM_SPECS.keys():
+                    abbr = PARAM_ABBR.get(k, k)
+                    parts.append(f"{abbr}={fmt_de(params[k])}")
+                return " ".join(parts)
 
-        # CSV Zeile (deutsch formatiert)
-        csv_vals = [
-            run_time_str,
-            str(i),
-            str(max_runs),
-            fmt_de(metrics["equity"]),
-            fmt_de(metrics["realized"]),
-            fmt_de(metrics["unrealized"]),
-            str(metrics["opens"]),
-            str(metrics["closes"]),
-            str(metrics["open_positions_end"]),
-        ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
+            # Wir halten Ergebnisse kurz zurück, um in Run-Reihenfolge zu schreiben
+            pending: Dict[int, Tuple[int, Dict[str, Any], Dict[str, Any]]] = {}
+            next_to_write = 1
 
-        with open(RESULTS_CSV_FILE, "a", encoding="utf-8", newline="") as f:
-            f.write(";".join(csv_vals) + "\n")
+            combo_iter = iter(enumerate(combos, 1))
+
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                initializer=_worker_init,
+                initargs=(INSTRUMENTS, TICKS_DIR),
+            ) as ex:
+                futures = {}
+
+                # Initial befüllen
+                for _ in range(inflight_target):
+                    try:
+                        run_id, combo = next(combo_iter)
+                    except StopIteration:
+                        break
+                    params = {k: v for k, v in zip(keys, combo)}
+                    fut = ex.submit(_worker_run, run_id, params)
+                    futures[fut] = run_id
+
+                # Laufende Abarbeitung
+                while futures:
+                    # immer genau ein fertiges Future ziehen (und danach nachschieben)
+                    for fut in as_completed(list(futures.keys())):
+                        run_id = futures.pop(fut)
+                        try:
+                            rid, metrics, params = fut.result()
+                        except Exception as e:
+                            # Harte Fehler lieber sichtbar machen
+                            raise RuntimeError(f"Worker-Fehler in Run {run_id}: {e}") from e
+
+                        pending[rid] = (rid, metrics, params)
+
+                        # Nächstes nachschieben
+                        try:
+                            next_run_id, next_combo = next(combo_iter)
+                            next_params = {k: v for k, v in zip(keys, next_combo)}
+                            nfut = ex.submit(_worker_run, next_run_id, next_params)
+                            futures[nfut] = next_run_id
+                        except StopIteration:
+                            pass
+
+                        # In Ordnung (1..N) wegschreiben/ausgeben, sobald verfügbar
+                        while next_to_write in pending:
+                            _, m, p = pending.pop(next_to_write)
+
+                            run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+                            saldo_str = f"{m['equity']:.2f}".replace(".", ",")
+                            print(f"{run_time_str} | Durchlauf {next_to_write}/{max_runs} | "
+                                  f"Saldo={saldo_str} | Trades={m['closes']} | {_param_str(p)}")
+
+                            csv_vals = [
+                                run_time_str,
+                                str(next_to_write),
+                                str(max_runs),
+                                fmt_de(m["equity"]),
+                                fmt_de(m["realized"]),
+                                fmt_de(m["unrealized"]),
+                                str(m["opens"]),
+                                str(m["closes"]),
+                                str(m["open_positions_end"]),
+                            ] + [fmt_de(p[k]) for k in PARAM_SPECS.keys()]
+                            f_csv.write(";".join(csv_vals) + "\n")
+
+                            next_to_write += 1
+
+                        break  # wichtig: nur 1 completion pro while-Iteration
+
+            return  # parallel fertig
+
+        # -----------------------------
+        # SEQUENTIELL (dein bisheriger Loop)
+        # -----------------------------
+        ticks_cache = {epic: load_ticks_for_instrument(epic, TICKS_DIR) for epic in INSTRUMENTS}
+
+        for i, combo in enumerate(combos, 1):
+            params = {k: v for k, v in zip(keys, combo)}
+            metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache)
+
+            parts = []
+            for k in PARAM_SPECS.keys():
+                abbr = PARAM_ABBR.get(k, k)
+                parts.append(f"{abbr}={fmt_de(params[k])}")
+            param_str = " ".join(parts)
+
+            run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+            saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
+            print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | Trades={metrics['closes']} | {param_str}")
+
+            csv_vals = [
+                run_time_str,
+                str(i),
+                str(max_runs),
+                fmt_de(metrics["equity"]),
+                fmt_de(metrics["realized"]),
+                fmt_de(metrics["unrealized"]),
+                str(metrics["opens"]),
+                str(metrics["closes"]),
+                str(metrics["open_positions_end"]),
+            ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
+            f_csv.write(";".join(csv_vals) + "\n")
+
 
         
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.freeze_support()
+
     if ENABLE_PROFILING:
         pr = cProfile.Profile()
         pr.enable()
@@ -497,7 +618,8 @@ if __name__ == "__main__":
 
         with open(PROFILE_OUT_FILE, "w", encoding="utf-8") as f:
             stats = pstats.Stats(pr, stream=f).sort_stats("cumtime")
-            stats.print_stats(40)  # Top 40 nach kumulativer Zeit
+            stats.print_stats(40)
         print(f"cProfile geschrieben: {PROFILE_OUT_FILE}")
     else:
         main()
+

@@ -1,2 +1,4 @@
 *.xlsx
 *.csv
+results.csv
+ticks/ticks_ETHUSD.csv

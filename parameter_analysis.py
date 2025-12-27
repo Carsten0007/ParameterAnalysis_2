@@ -46,13 +46,13 @@ MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 PARAM_SPECS = {
     "EMA_FAST":                             (10, 0, 0),     # int (!) (start, band, step)  int
     "EMA_SLOW":                             (18, 0, 0),    # int (!)
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000),  # float
-    "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 0.0000, 0.0000),          # float
-    "STOP_LOSS_PCT":                        (0.0030, 0.0000, 0.0000),                   # fester Stop-Loss
-    "TRAILING_STOP_PCT":                    (0.0050, 0.0000, 0.0000),        # Trailing Stop
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 3.0000, 1.0000),  # float
+    "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000),          # float
+    "STOP_LOSS_PCT":                        (0.0030, 0.0020, 0.0010),                   # fester Stop-Loss
+    "TRAILING_STOP_PCT":                    (0.0050, 0.0040, 0.0010),        # Trailing Stop
     "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),            # Filter für Trailing-Nachzie-Schwelle (spread*TRAILING_SET_CALM_DOWN)
-    "TAKE_PROFIT_PCT":                      (0.0060, 0.0000, 0.0000),                 # z. B. 0,2% Gewinnziel
-    "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0000, 0.0000),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
+    "TAKE_PROFIT_PCT":                      (0.0060, 0.0030, 0.0010),                 # z. B. 0,2% Gewinnziel
+    "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0020, 0.0010),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
     "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
 }
 
@@ -184,7 +184,7 @@ def _worker_run(run_id, params):
 # ============================================================
 
 def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, float, float, int]]:
-    fn = ticks_dir / f"ticks_{epic}.csv"
+    fn = ticks_dir / f"ticks_{epic}_9.csv"
     if not fn.exists():
         raise FileNotFoundError(f"Tick-Datei fehlt: {fn}")
 
@@ -576,33 +576,6 @@ def main():
         # SEQUENTIELL (dein bisheriger Loop)
         # -----------------------------
         ticks_cache = {epic: load_ticks_for_instrument(epic, TICKS_DIR) for epic in INSTRUMENTS}
-
-        # --- Info: Start/Ende der Tick-Datei(en) einmalig ins Log ---
-        def _fmt_ts_ms_local(ts_ms: int) -> str:
-            dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(bot.LOCAL_TZ)
-            return dt.strftime("%d.%m.%Y %H:%M:%S")
-
-        # pro Instrument (und zusätzlich global, falls mehrere Instrumente)
-        all_first = []
-        all_last = []
-
-        for epic in INSTRUMENTS:
-            ticks = ticks_cache.get(epic) or []
-            if not ticks:
-                print(f"[{epic}] Tick-Zeitraum: (keine Ticks geladen)")
-                continue
-
-            ts_first = ticks[0][0]   # (ts_ms, bid, ask, minute_key)
-            ts_last  = ticks[-1][0]
-
-            all_first.append(ts_first)
-            all_last.append(ts_last)
-
-            print(f"[{epic}] Tick-Zeitraum: {_fmt_ts_ms_local(ts_first)}  bis  {_fmt_ts_ms_local(ts_last)}")
-
-        if all_first and all_last and len(INSTRUMENTS) > 1:
-            print(f"[ALL]  Tick-Zeitraum: {_fmt_ts_ms_local(min(all_first))}  bis  {_fmt_ts_ms_local(max(all_last))}")
-
 
         for i, combo in enumerate(combos, 1):
             params = {k: v for k, v in zip(keys, combo)}

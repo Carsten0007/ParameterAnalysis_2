@@ -184,7 +184,7 @@ def _worker_run(run_id, params):
 # ============================================================
 
 def load_ticks_for_instrument(epic: str, ticks_dir: Path) -> List[Tuple[int, float, float, int]]:
-    fn = ticks_dir / f"ticks_{epic}_9.csv"
+    fn = ticks_dir / f"ticks_{epic}.csv"
     if not fn.exists():
         raise FileNotFoundError(f"Tick-Datei fehlt: {fn}")
 

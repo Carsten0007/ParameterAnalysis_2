@@ -14,7 +14,6 @@ import os
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
-import multiprocessing as mp
 
 # ============================================================
 # KONFIG (im Code, keine CLI)
@@ -63,19 +62,6 @@ PARAM_SPECS = {
     "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
     }
 
-# PARAM_SPECS = {
-#     "EMA_FAST":                             (10, 1, 1),
-#     "EMA_SLOW":                             (18, 1, 1),
-#     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000),
-#     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000),
-#     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010),
-#     "TRAILING_STOP_PCT":                    (0.0050, 0.0010, 0.0010),
-#     "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),
-#     "TAKE_PROFIT_PCT":                      (0.0060, 0.0010, 0.0010),
-#     "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0010, 0.0010),
-#     "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),
-# }
-
 PARAM_ABBR = {
     "EMA_FAST": "E_FAST",
     "EMA_SLOW": "E_SLOW",
@@ -93,13 +79,13 @@ PARAM_ABBR = {
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True
-SNAPSHOT_LAST_LINES = 10000  # << anpassen: wie viele letzte Zeilen übernehmen?
+SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 10      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 30      # Wartezeit zwischen Läufen (Sekunden)
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
@@ -170,17 +156,49 @@ def int_range_centered(start: int, band: int, step: int) -> List[int]:
     return vals
 
 
-def build_param_grid(param_specs: Dict[str, Tuple[Any, Any, Any]]) -> Tuple[List[str], List[Tuple[Any, ...]]]:
+def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str], List[Tuple[Any, ...]]]:
+    """
+    Unterstützt:
+      - 3-Tupel: (start, band, step)
+      - 5-Tupel: (start, band, step, min, max)
+
+    Strategie 1 (Filter-only):
+      Werte werden erzeugt wie bisher um start±band und dann
+      außerhalb [min,max] verworfen (kein Clamping, keine Fenster-Verschiebung).
+    """
     keys = list(param_specs.keys())
-    value_lists = []
+    value_lists: List[List[Any]] = []
+
     for k in keys:
-        start, band, step = param_specs[k]
-        if isinstance(start, int) and isinstance(band, int) and isinstance(step, int):
-            value_lists.append(int_range_centered(start, band, step))
+        spec = param_specs[k]
+
+        if len(spec) == 3:
+            start, band, step = spec
+            vmin, vmax = None, None
+        elif len(spec) == 5:
+            start, band, step, vmin, vmax = spec
         else:
-            value_lists.append(float_range_centered(float(start), float(band), float(step)))
+            raise ValueError(f"PARAM_SPECS[{k}] muss 3- oder 5-Tupel sein, ist aber: {spec}")
+
+        # Bereich erzeugen (wie bisher)
+        if isinstance(start, int) and isinstance(band, int) and isinstance(step, int):
+            vals = int_range_centered(int(start), int(band), int(step))
+        else:
+            vals = float_range_centered(float(start), float(band), float(step))
+
+        # Filter-only: min/max anwenden, falls vorhanden
+        if vmin is not None and vmax is not None:
+            # für ints/floats gleicher Vergleich (Python kann int/float vergleichen)
+            vals = [v for v in vals if vmin <= v <= vmax]
+
+        if not vals:
+            raise ValueError(f"PARAM_SPECS[{k}] erzeugt 0 Werte nach Filter (spec={spec}).")
+
+        value_lists.append(vals)
+
     combos = list(itertools.product(*value_lists))
     return keys, combos
+
 
 
 # ============================================================
@@ -270,9 +288,13 @@ def snapshot_ticks_from_bot(instruments: List[str], tradingbot_dir: Path, dest_t
             f.write(payload)
         os.replace(tmp, dst)
 
-        print(f"🧩 SNAPSHOT: {epic} ← {src.name} | letzte {last_lines} Zeilen → {dst}")
-
-
+        # --- nice-to-have: Gesamtzeitraum des Snapshots loggen (aus den geschriebenen Dateien) ---
+        t0_ms, t1_ms, dur_hms = get_snapshot_time_range(instruments, dest_ticks_dir)
+        if t0_ms is not None and t1_ms is not None:
+            t0_str = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+            t1_str = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+            
+        print(f"🧩 SNAPSHOT: {epic} ← {src.name} | letzte {last_lines} Zeilen → {dst} ({dur_hms})")
 
 # ============================================================
 # Tick Loader (pro Instrument: ticks_<EPIC>.csv)
@@ -559,6 +581,66 @@ def run_single_backtest(
         "open_positions_end": open_count,
     }
 
+# ============================================================
+# Liest pro Instrument aus der Snapshot-Tickdatei (ticks_<EPIC>.csv) die erste und letzte Zeile,
+# extrahiert ts_ms und gibt (min_ts_ms, max_ts_ms, duration_hhmmss) zurück.
+# Format Tickzeile: ts_ms;bid;ask
+# ============================================================
+def get_snapshot_time_range(instruments: List[str], ticks_dir: Path) -> Tuple[Optional[int], Optional[int], str]:
+    
+    min_ts = None
+    max_ts = None
+
+    for epic in instruments:
+        p = ticks_dir / f"ticks_{epic}.csv"
+        if not p.exists():
+            continue
+
+        try:
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                first_line = f.readline().strip()
+
+                # letzte nicht-leere Zeile holen (ohne die ganze Datei zu laden)
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                last_line = ""
+                chunk = 4096
+                while pos > 0 and not last_line:
+                    read_size = min(chunk, pos)
+                    pos -= read_size
+                    f.seek(pos)
+                    data = f.read(read_size)
+                    lines = data.splitlines()
+                    # letzte nicht-leere Zeile
+                    for ln in reversed(lines):
+                        if ln.strip():
+                            last_line = ln.strip()
+                            break
+
+            if ";" not in first_line or ";" not in last_line:
+                continue
+
+            ts0 = int(first_line.split(";", 1)[0].strip())
+            ts1 = int(last_line.split(";", 1)[0].strip())
+
+            lo, hi = (ts0, ts1) if ts0 <= ts1 else (ts1, ts0)
+
+            min_ts = lo if (min_ts is None or lo < min_ts) else min_ts
+            max_ts = hi if (max_ts is None or hi > max_ts) else max_ts
+
+        except Exception:
+            continue
+
+    if min_ts is None or max_ts is None:
+        return None, None, "00:00:00"
+
+    dur_s = max(0, (max_ts - min_ts) // 1000)
+    hh = dur_s // 3600
+    mm = (dur_s % 3600) // 60
+    ss = dur_s % 60
+    return min_ts, max_ts, f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+
 
 # ============================================================
 # Liest results.csv (Semikolon-getrennt), ermittelt die Zeile mit maximaler 'equity'
@@ -576,6 +658,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     if not results_csv.exists():
         print(f"⚠️ Keine Results-Datei gefunden: {results_csv}")
         return
+
+    # --- analysierter Zeitraum (aus Snapshot-Ticks) ---
+    t0_ms, t1_ms, dur_hms = get_snapshot_time_range(INSTRUMENTS, TICKS_DIR)
 
     # Datei einlesen
     lines = results_csv.read_text(encoding="utf-8").splitlines()
@@ -644,17 +729,62 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     # parameter.csv schreiben (überschreiben)
     with open(out_parameter_csv, "w", encoding="utf-8", newline="") as f:
         for k, v in params_out:
-            f.write(f"{k};{v}\n")
+            # Bot erwartet Dezimalpunkt
+            v_bot = v.replace(",", ".")
+            f.write(f"{k};{v_bot}\n")
 
         # --- fest ergänzte Parameter (für Bot erforderlich) ---
         f.write("USE_HMA;True\n")
         f.write("TRADE_RISK_PCT;0.0025\n")
         f.write("MANUAL_TRADE_SIZE;0.3\n")
 
+    # --- Verlauf protokollieren (bestes Ergebnis je Lauf) ---
+    history_file = RESULTS_DIR / "result_history.csv"
+    ts_local = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+
+    # Trades/Closes aus der best_row lesen (falls vorhanden)
+    closes_val = ""
+    if "closes" in header:
+        ci = header.index("closes")
+        if ci < len(best_row):
+            closes_val = best_row[ci].strip()
+
+    # History-Header bei Bedarf schreiben
+    if not history_file.exists():
+        hist_header = ["timestamp", "range_start", "range_end", "range_duration", "equity", "closes"] + list(PARAM_SPECS.keys())
+        with open(history_file, "w", encoding="utf-8", newline="") as hf:
+            hf.write(";".join(hist_header) + "\n")
+
+    # Eine Zeile anhängen
+    range_start = ""
+    range_end = ""
+    if t0_ms is not None and t1_ms is not None:
+        range_start = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+        range_end   = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+
+    hist_vals = [
+        ts_local,
+        range_start,
+        range_end,
+        dur_hms,
+        f"{best_equity:.6f}".replace(".", ","),
+        closes_val,
+    ] + [dict(params_out).get(k, "") for k in PARAM_SPECS.keys()]
+
+    with open(history_file, "a", encoding="utf-8", newline="") as hf:
+        hf.write(";".join(hist_vals) + "\n")
+
+
     # Log-Ausgabe
     equity_de = f"{best_equity:.2f}".replace(".", ",")
     print("\n===== BESTER PARAMETER-SATZ (aus results.csv) =====")
     print(f"Equity: {equity_de}")
+
+    if t0_ms is not None and t1_ms is not None:
+        t0_str = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+        t1_str = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+        print(f"Zeitraum: {t0_str} → {t1_str} (Dauer {dur_hms})")
+
     for k, v in params_out:
         print(f"{k} = {v}")
     print(f"✅ geschrieben: {out_parameter_csv}\n")
@@ -687,8 +817,7 @@ def main():
         # PARALLEL
         # -----------------------------
         if ENABLE_PARALLEL:
-            import os
-            import multiprocessing as mp
+            import os            
             from concurrent.futures import ProcessPoolExecutor, as_completed
 
             # Worker-Anzahl
@@ -755,7 +884,7 @@ def main():
 
                             run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
                             saldo_str = f"{m['equity']:.2f}".replace(".", ",")
-                            print(f"{run_time_str} | Durchlauf {next_to_write}/{max_runs} | "
+                            print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
                                   f"Saldo={saldo_str} | Trades={m['closes']} | {_param_str(p)}")
 
                             csv_vals = [
@@ -839,6 +968,8 @@ if __name__ == "__main__":
             run_idx += 1
             print(f"\n===== PARAMETER_ANALYSIS RUN #{run_idx} | {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} CET =====")
 
+            t_start = time.perf_counter()
+
             if ENABLE_PROFILING:
                 pr = cProfile.Profile()
                 pr.enable()
@@ -851,6 +982,13 @@ if __name__ == "__main__":
                 print(f"cProfile geschrieben: {PROFILE_OUT_FILE}")
             else:
                 main()
+
+            t_end = time.perf_counter()
+            dur_s = t_end - t_start
+            hh = int(dur_s // 3600)
+            mm = int((dur_s % 3600) // 60)
+            ss = int(dur_s % 60)
+            print(f"⏱️ Batch-Rechenzeit: {hh:02d}:{mm:02d}:{ss:02d} ({dur_s:.2f}s)")
 
             if not LOOP_ENABLED:
                 break

@@ -13,6 +13,8 @@ import pstats
 import os
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
+import multiprocessing as mp
 
 # ============================================================
 # KONFIG (im Code, keine CLI)
@@ -24,7 +26,6 @@ TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<
 TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
 
 RESULTS_DIR = THIS_DIR / "results"
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)  # << WICHTIG: Ordner anlegen
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
 
 PROFILE_OUT_FILE = THIS_DIR / "profile.txt"
@@ -48,8 +49,8 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # --- Parameter-Spezifikation ---
 # band=0 oder step=0 => keine Variation
 PARAM_SPECS = {
-    "EMA_FAST":                             (10, 0, 0),
-    "EMA_SLOW":                             (18, 0, 0),
+    "EMA_FAST":                             (10, 1, 1),
+    "EMA_SLOW":                             (18, 1, 1),
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000),
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000),
     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010),
@@ -78,6 +79,12 @@ PARAM_ABBR = {
 # ============================================================
 SNAPSHOT_ENABLED = True
 SNAPSHOT_LAST_LINES = 10000  # << anpassen: wie viele letzte Zeilen übernehmen?
+
+# ============================================================
+# LOOP-BETRIEB (kontinuierlicher Batch)
+# ============================================================
+LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
+LOOP_SLEEP_SECONDS = 10      # Wartezeit zwischen Läufen (Sekunden)
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
@@ -538,8 +545,107 @@ def run_single_backtest(
     }
 
 
-def main():
-    
+# ============================================================
+# Liest results.csv (Semikolon-getrennt), ermittelt die Zeile mit maximaler 'equity'
+# (bei mehreren Maxima: die erste/oberste) und schreibt daraus parameter.csv
+# im Format KEY;VALUE (wie dein Anhang).
+
+# Regeln:
+# - Maßgeblich: Spalte 'equity' (max. Wert gewinnt; bei allen negativ = kleinster Verlust).
+# - Wenn equity in allen Zeilen == 0 -> nichts ausgeben / nichts schreiben.
+# - Wenn keine gültigen Datenzeilen -> nichts ausgeben / nichts schreiben.
+# ============================================================
+
+def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) -> None:
+
+    if not results_csv.exists():
+        print(f"⚠️ Keine Results-Datei gefunden: {results_csv}")
+        return
+
+    # Datei einlesen
+    lines = results_csv.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 2:
+        print(f"⚠️ Results-Datei enthält keine Datenzeilen: {results_csv}")
+        return
+
+    header = lines[0].split(";")
+    if "equity" not in header:
+        print(f"⚠️ Spalte 'equity' nicht gefunden in: {results_csv}")
+        return
+
+    equity_idx = header.index("equity")
+
+    best_equity = None
+    best_row = None
+
+    any_nonzero_equity = False
+
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+
+        cols = line.split(";")
+        if len(cols) <= equity_idx:
+            continue
+
+        equity_str = cols[equity_idx].strip()
+        if equity_str == "":
+            continue
+
+        # fmt_de schreibt Komma als Dezimaltrenner -> für Vergleich in float wandeln
+        equity_val = float(equity_str.replace(",", "."))
+        if equity_val != 0.0:
+            any_nonzero_equity = True
+
+        # Max suchen; bei Gleichstand gewinnt die erste Zeile => nur ">" verwenden
+        if best_equity is None or equity_val > best_equity:
+            best_equity = equity_val
+            best_row = cols
+
+    # Wenn keine gültige Zeile gefunden wurde
+    if best_row is None or best_equity is None:
+        print("⚠️ Kein gültiger Ergebnis-Datensatz gefunden (results.csv leer/invalid).")
+        return
+
+    # Wenn equity durchgängig 0 => nichts ausgeben/schreiben
+    if not any_nonzero_equity:
+        print("ℹ️ Keine Trades/kein Effekt: equity ist durchgängig 0 -> kein Export.")
+        return
+
+    # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
+    # (genau so wird results.csv bei dir geschrieben)
+    params_out = []
+    for k in PARAM_SPECS.keys():
+        if k not in header:
+            continue
+        idx = header.index(k)
+        if idx < len(best_row):
+            params_out.append((k, best_row[idx].strip()))
+
+    if not params_out:
+        print("⚠️ Keine Parameter-Spalten gefunden -> kein Export.")
+        return
+
+    # parameter.csv schreiben (überschreiben)
+    with open(out_parameter_csv, "w", encoding="utf-8", newline="") as f:
+        for k, v in params_out:
+            f.write(f"{k};{v}\n")
+
+        # --- fest ergänzte Parameter (für Bot erforderlich) ---
+        f.write("USE_HMA;True\n")
+        f.write("TRADE_RISK_PCT;0.0025\n")
+        f.write("MANUAL_TRADE_SIZE;0.3\n")
+
+    # Log-Ausgabe
+    equity_de = f"{best_equity:.2f}".replace(".", ",")
+    print("\n===== BESTER PARAMETER-SATZ (aus results.csv) =====")
+    print(f"Equity: {equity_de}")
+    for k, v in params_out:
+        print(f"{k} = {v}")
+    print(f"✅ geschrieben: {out_parameter_csv}\n")
+
+
+def main():    
     # --- Schritt 1: Tick-Snapshot aus laufendem Bot ziehen ---
     if SNAPSHOT_ENABLED:
         snapshot_ticks_from_bot(
@@ -654,6 +760,18 @@ def main():
 
                         break  # wichtig: nur 1 completion pro while-Iteration
 
+            # --- Nach dem vollständigen Durchlauf: besten Parametersatz exportieren ---
+            f_csv.flush()
+            try:
+                os.fsync(f_csv.fileno())
+            except Exception:
+                pass
+
+            export_best_params_from_results(
+                results_csv=RESULTS_CSV_FILE,
+                out_parameter_csv=THIS_DIR / "parameter.csv"
+            )
+
             return  # parallel fertig
 
         # -----------------------------
@@ -688,22 +806,44 @@ def main():
             ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
             f_csv.write(";".join(csv_vals) + "\n")
 
+    # --- Nach dem vollständigen Durchlauf: besten Parametersatz exportieren ---
+    export_best_params_from_results(
+        results_csv=RESULTS_CSV_FILE,
+        out_parameter_csv=THIS_DIR / "parameter.csv"
+    )
 
         
 if __name__ == "__main__":
-    import multiprocessing as mp
+    
     mp.freeze_support()
 
-    if ENABLE_PROFILING:
-        pr = cProfile.Profile()
-        pr.enable()
-        main()
-        pr.disable()
+    run_idx = 0
 
-        with open(PROFILE_OUT_FILE, "w", encoding="utf-8") as f:
-            stats = pstats.Stats(pr, stream=f).sort_stats("cumtime")
-            stats.print_stats(40)
-        print(f"cProfile geschrieben: {PROFILE_OUT_FILE}")
-    else:
-        main()
+    try:
+        while True:
+            run_idx += 1
+            print(f"\n===== PARAMETER_ANALYSIS RUN #{run_idx} | {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} CET =====")
+
+            if ENABLE_PROFILING:
+                pr = cProfile.Profile()
+                pr.enable()
+                main()
+                pr.disable()
+
+                with open(PROFILE_OUT_FILE, "w", encoding="utf-8") as f:
+                    stats = pstats.Stats(pr, stream=f).sort_stats("cumtime")
+                    stats.print_stats(40)
+                print(f"cProfile geschrieben: {PROFILE_OUT_FILE}")
+            else:
+                main()
+
+            if not LOOP_ENABLED:
+                break
+
+            if LOOP_SLEEP_SECONDS > 0:
+                print(f"--- Warte {LOOP_SLEEP_SECONDS} Sekunden bis zum nächsten Lauf ---")
+                time.sleep(LOOP_SLEEP_SECONDS)
+
+    except KeyboardInterrupt:
+        print("\n[STOP] KeyboardInterrupt - Loop beendet.")
 

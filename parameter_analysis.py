@@ -14,46 +14,50 @@ import os
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-
 # ============================================================
 # KONFIG (im Code, keine CLI)
 # ============================================================
 
-# Laufzeit Tracking an-/ausschalten
-ENABLE_PROFILING = False   # für Laufzeit Tracking, bei Bedarf False
-PROFILE_OUT_FILE = Path(__file__).resolve().parent / "profile.txt"
+# --- Grundpfade ---
+THIS_DIR = Path(__file__).resolve().parent
+TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<EPIC>.csv
+TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
 
+RESULTS_DIR = THIS_DIR / "results"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)  # << WICHTIG: Ordner anlegen
+RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
+
+PROFILE_OUT_FILE = THIS_DIR / "profile.txt"
+
+# --- Run/Instrumente ---
 INSTRUMENTS = ["ETHUSD"]  # später z.B. ["ETHUSD", "BTCUSD"]
-
-# Tick-Dateien liegen hier:
-# ParameterAnalysis\ticks\ticks_ETHUSD.csv
-TICKS_DIR = Path(__file__).resolve().parent / "ticks"
-
-# Ergebnis-Datei
-RESULTS_CSV_FILE = Path(__file__).resolve().parent / "results.csv"
-
 FORCE_CLOSE_OPEN_POSITIONS_AT_END = True
 
-# Parallelisierung
+# --- Laufzeit / Profiling ---
+ENABLE_PROFILING = False   # für Laufzeit Tracking, bei Bedarf True
+
+# --- Parallelisierung ---
 ENABLE_PARALLEL = True
 MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
-# Parallelisierung: maximale Anzahl gleichzeitig "in flight" laufender Runs
 MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 
+# --- Output/Speed ---
+SUPPRESS_BOT_OUTPUT = True
+BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = schnell
 
-# Parameter-Spezifikation:
+# --- Parameter-Spezifikation ---
 # band=0 oder step=0 => keine Variation
 PARAM_SPECS = {
-    "EMA_FAST":                             (10, 0, 0),     # int (!) (start, band, step)  int
-    "EMA_SLOW":                             (18, 0, 0),    # int (!)
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 3.0000, 1.0000),  # float
-    "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000),          # float
-    "STOP_LOSS_PCT":                        (0.0030, 0.0020, 0.0010),                   # fester Stop-Loss
-    "TRAILING_STOP_PCT":                    (0.0050, 0.0040, 0.0010),        # Trailing Stop
-    "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),            # Filter für Trailing-Nachzie-Schwelle (spread*TRAILING_SET_CALM_DOWN)
-    "TAKE_PROFIT_PCT":                      (0.0060, 0.0030, 0.0010),                 # z. B. 0,2% Gewinnziel
-    "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0020, 0.0010),            # sicherung der Null-Schwelle / kein Verlust mehr möglich
-    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),          # Puffer über BREAK_EVEN_STOP, ab dem der BE auf BREAK_EVEN_STOP gesetzt wird
+    "EMA_FAST":                             (10, 0, 0),
+    "EMA_SLOW":                             (18, 0, 0),
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000),
+    "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000),
+    "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010),
+    "TRAILING_STOP_PCT":                    (0.0050, 0.0010, 0.0010),
+    "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000),
+    "TAKE_PROFIT_PCT":                      (0.0060, 0.0010, 0.0010),
+    "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0010, 0.0010),
+    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000),
 }
 
 PARAM_ABBR = {
@@ -69,19 +73,15 @@ PARAM_ABBR = {
     "BREAK_EVEN_BUFFER_PCT": "BE_BUF_PCT",
 }
 
-# Print-Flut: True => Bot-Prints werden unterdrückt (empfohlen)
-SUPPRESS_BOT_OUTPUT = True
-
-# Backtest-Speed: on_candle_forming ist sehr teuer (HMA/WMA) und für Entries i.d.R. nicht nötig
-BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = schnell
+# ============================================================
+# SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
+# ============================================================
+SNAPSHOT_ENABLED = True
+SNAPSHOT_LAST_LINES = 10000  # << anpassen: wie viele letzte Zeilen übernehmen?
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
 # ============================================================
-
-THIS_DIR = Path(__file__).resolve().parent
-TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot"  # passt bei deiner Struktur
-
 if not TRADINGBOT_DIR.exists():
     raise FileNotFoundError(f"TradingBot-Verzeichnis nicht gefunden: {TRADINGBOT_DIR}")
 
@@ -177,6 +177,80 @@ def _worker_init(instruments, ticks_dir):
 def _worker_run(run_id, params):
     metrics = run_single_backtest(_WORKER_INSTRUMENTS, params, _WORKER_TICKS_CACHE)
     return run_id, metrics, params
+
+
+def _tail_lines_bytes(path: Path, n_lines: int, chunk_size: int = 1024 * 1024) -> bytes:
+    """
+    Liest die letzten n_lines Zeilen (LF-getrennt) einer Datei effizient von hinten.
+    Gibt Roh-Bytes zurück (UTF-8 kompatibel). Entfernt eine evtl. unvollständige letzte Zeile.
+    """
+    if n_lines <= 0:
+        return b""
+
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        file_size = f.tell()
+        if file_size == 0:
+            return b""
+
+        data = b""
+        pos = file_size
+
+        # Von hinten chunkweise lesen, bis genug Zeilen vorhanden sind
+        while pos > 0 and data.count(b"\n") <= n_lines:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            data = f.read(read_size) + data
+
+        # Falls die Datei währenddessen geschrieben wurde: evtl. letzte Zeile unvollständig -> weg
+        if data and not data.endswith(b"\n"):
+            last_nl = data.rfind(b"\n")
+            if last_nl != -1:
+                data = data[: last_nl + 1]
+            else:
+                data = b""
+
+        # Auf die letzten n_lines Zeilen schneiden
+        lines = data.splitlines(keepends=True)
+        if len(lines) <= n_lines:
+            return b"".join(lines)
+        return b"".join(lines[-n_lines:])
+
+
+def _resolve_bot_tick_file(tradingbot_dir: Path, epic: str) -> Path:
+    """
+    Bot schreibt aktuell typischerweise in den Arbeitsordner: ticks_<EPIC>.csv
+    Optional akzeptieren wir auch TradingBot/ticks/ticks_<EPIC>.csv, falls du das später so änderst.
+    """
+    candidates = [
+        tradingbot_dir / f"ticks_{epic}.csv",
+        tradingbot_dir / "ticks" / f"ticks_{epic}.csv",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    raise FileNotFoundError(f"Keine Tickdatei für {epic} gefunden. Geprüft: {candidates}")
+
+
+def snapshot_ticks_from_bot(instruments: List[str], tradingbot_dir: Path, dest_ticks_dir: Path, last_lines: int) -> None:
+    dest_ticks_dir.mkdir(parents=True, exist_ok=True)
+
+    for epic in instruments:
+        src = _resolve_bot_tick_file(tradingbot_dir, epic)
+        dst = dest_ticks_dir / f"ticks_{epic}.csv"
+
+        payload = _tail_lines_bytes(src, last_lines)
+
+        # Atomic-ish overwrite: erst temp, dann replace
+        tmp = dst.with_suffix(".csv.tmp")
+        with open(tmp, "wb") as f:
+            f.write(payload)
+        os.replace(tmp, dst)
+
+        print(f"🧩 SNAPSHOT: {epic} ← {src.name} | letzte {last_lines} Zeilen → {dst}")
+
+
 
 # ============================================================
 # Tick Loader (pro Instrument: ticks_<EPIC>.csv)
@@ -465,6 +539,16 @@ def run_single_backtest(
 
 
 def main():
+    
+    # --- Schritt 1: Tick-Snapshot aus laufendem Bot ziehen ---
+    if SNAPSHOT_ENABLED:
+        snapshot_ticks_from_bot(
+            instruments=INSTRUMENTS,
+            tradingbot_dir=TRADINGBOT_DIR,
+            dest_ticks_dir=TICKS_DIR,
+            last_lines=SNAPSHOT_LAST_LINES
+        )
+
     keys, combos = build_param_grid(PARAM_SPECS)
     max_runs = len(combos)
 

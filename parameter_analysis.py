@@ -88,7 +88,7 @@ SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
 
-MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
+MIN_CLOSED_TRADES_FOR_EXPORT = 2   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 
 
@@ -685,15 +685,18 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     equity_idx = header.index("equity")
 
+    closes_idx = header.index("closes") if "closes" in header else None
+    best_closes = -1
+
     best_equity = None
     best_row = None
 
     any_nonzero_equity = False
 
-
     # Start-Equity aus results.csv bestimmen (Zeile finden, deren Parameter dem Startsatz entsprechen)
     start_equity = None
     if START_PARAMS_STR:
+        
         for line in lines[1:]:
             if not line.strip():
                 continue
@@ -733,14 +736,27 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if equity_val != 0.0:
             any_nonzero_equity = True
 
+        # B) Mindestanzahl closes vorab filtern (damit gleiche equities nicht am Ende scheitern)
+        closes_i = 0
+        if closes_idx is not None and closes_idx < len(cols):
+            v = cols[closes_idx].strip()
+            closes_i = int(v) if v.isdigit() else 0
+
+        if closes_i < MIN_CLOSED_TRADES_FOR_EXPORT:
+            continue
+
         # B) Improvement-Gate: nur Kandidaten besser als Startsatz zulassen
         if start_equity is not None and equity_val <= start_equity:
             continue
         
-        # Max suchen; bei Gleichstand gewinnt die erste Zeile => nur ">" verwenden
-        if best_equity is None or equity_val > best_equity:
+        # Max suchen; bei Gleichstand gewinnt die Zeile mit mehr closes
+        if (best_equity is None
+            or equity_val > best_equity
+            or (equity_val == best_equity and closes_i > best_closes)):
             best_equity = equity_val
             best_row = cols
+            best_closes = closes_i
+
 
     # B) Wenn Improvement-Gate aktiv war, aber keine Verbesserung gefunden wurde: kein Export
     if start_equity is not None and (best_row is None or best_equity is None):
@@ -765,14 +781,7 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         ci = header.index("closes")
         if ci < len(best_row):
             closes_val = best_row[ci].strip()
-
-    # Wenn Mindestanzahl Trades NICHT geschlossen wurden: NICHT übernehmen
-    closes_i = int(closes_val) if closes_val.isdigit() else 0
-    if closes_i < MIN_CLOSED_TRADES_FOR_EXPORT:
-        print(f"ℹ️ Kein Parameter-Export: closes={closes_i} < {MIN_CLOSED_TRADES_FOR_EXPORT}.")
-        return
-
-
+    
     # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
     # (genau so wird results.csv bei dir geschrieben)
     params_out = []

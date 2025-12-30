@@ -707,8 +707,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
                 if eq_str != "":
                     start_equity = float(eq_str.replace(",", "."))
                 break
-
-
+    
+    if START_PARAMS_STR and start_equity is None:
+        print("⚠️ Startsatz in results.csv nicht gefunden -> Improvement-Gate deaktiviert (nur für diesen Lauf).")
 
     for line in lines[1:]:
         if not line.strip():
@@ -730,10 +731,7 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         # B) Improvement-Gate: nur Kandidaten besser als Startsatz zulassen
         if start_equity is not None and equity_val <= start_equity:
             continue
-
-        if start_equity is None:
-            print("⚠️ Startsatz in results.csv nicht gefunden -> Improvement-Gate deaktiviert (nur für diesen Lauf).")
-
+        
         # Max suchen; bei Gleichstand gewinnt die erste Zeile => nur ">" verwenden
         if best_equity is None or equity_val > best_equity:
             best_equity = equity_val
@@ -925,6 +923,7 @@ def main():
     effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)
 
     # Startwerte (Grid-Zentrum) als Strings wie in results.csv
+    global START_PARAMS_STR
     START_PARAMS_STR = {k: fmt_de(effective_specs[k][0]) for k in PARAM_SPECS.keys()}
 
     keys, combos = build_param_grid(effective_specs)

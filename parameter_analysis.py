@@ -23,6 +23,7 @@ import time
 THIS_DIR = Path(__file__).resolve().parent
 TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<EPIC>.csv
 TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
+PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter.csv"
 
 RESULTS_DIR = THIS_DIR / "results"
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
@@ -50,8 +51,8 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 
 #   name,                                   initial , band, step, min, max
 PARAM_SPECS = {
-    "EMA_FAST":                             (10, 1, 1, 2, 20),
-    "EMA_SLOW":                             (18, 1, 1, 2, 50),
+    "EMA_FAST":                             (10, 2, 2, 2, 20),
+    "EMA_SLOW":                             (18, 2, 2, 2, 50),
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000, 0.0000, 50),
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000, 0.0000, 5),
     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
@@ -79,13 +80,13 @@ PARAM_ABBR = {
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True
-SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
+SNAPSHOT_LAST_LINES = 100000  # << anpassen: wie viele letzte Zeilen übernehmen?
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 30      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
@@ -712,6 +713,18 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         print("ℹ️ Keine Trades/kein Effekt: equity ist durchgängig 0 -> kein Export.")
         return
 
+    # Trades/Closes aus der best_row lesen (falls vorhanden)
+    closes_val = ""
+    if "closes" in header:
+        ci = header.index("closes")
+        if ci < len(best_row):
+            closes_val = best_row[ci].strip()
+
+    # Wenn keine Trades geschlossen wurden: NICHT übernehmen
+    if closes_val.strip() == "0":
+        print("ℹ️ Kein Parameter-Export: closes=0 (keine abgeschlossenen Trades).")
+        return
+
     # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
     # (genau so wird results.csv bei dir geschrieben)
     params_out = []
@@ -741,13 +754,6 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     # --- Verlauf protokollieren (bestes Ergebnis je Lauf) ---
     history_file = RESULTS_DIR / "result_history.csv"
     ts_local = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-
-    # Trades/Closes aus der best_row lesen (falls vorhanden)
-    closes_val = ""
-    if "closes" in header:
-        ci = header.index("closes")
-        if ci < len(best_row):
-            closes_val = best_row[ci].strip()
 
     # History-Header bei Bedarf schreiben
     if not history_file.exists():
@@ -790,6 +796,77 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     print(f"✅ geschrieben: {out_parameter_csv}\n")
 
 
+# ============================================================
+# Liest KEY;VALUE aus parameter.csv.
+# Gibt Strings zurück; Casting passiert beim Anwenden pro Parametertyp.
+# ============================================================
+
+def read_parameter_csv(path: Path) -> Dict[str, str]:
+    
+    out: Dict[str, str] = {}
+    if not path.exists():
+        return out
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ";" not in line:
+                    continue
+                k, v = [p.strip() for p in line.split(";", 1)]
+                if k:
+                    out[k] = v
+    except Exception:
+        return {}
+
+    return out
+
+# ============================================================
+# Ersetzt in PARAM_SPECS nur den Startwert (1. Element) durch den Wert aus parameter.csv,
+# falls vorhanden und parsebar. Band/Step/Min/Max bleiben unverändert.
+# ============================================================
+
+def apply_start_values_from_file(param_specs: Dict[str, Tuple[Any, ...]], param_file: Path) -> Dict[str, Tuple[Any, ...]]:
+    
+    start_map = read_parameter_csv(param_file)
+    if not start_map:
+        return param_specs
+
+    new_specs: Dict[str, Tuple[Any, ...]] = {}
+
+    for k, spec in param_specs.items():
+        if k not in start_map:
+            new_specs[k] = spec
+            continue
+
+        raw = start_map[k]
+
+        # Typ am vorhandenen Spec-Startwert erkennen (EMA_* int, Rest float)
+        try:
+            if isinstance(spec[0], int):
+                start_val = int(float(raw))   # toleriert "10" und "10.0"
+            else:
+                start_val = float(raw)        # Bot-Datei nutzt Dezimalpunkt
+        except Exception:
+            # wenn kaputt/nicht parsebar -> alten Startwert behalten
+            new_specs[k] = spec
+            continue
+
+        if len(spec) == 5:
+            _, band, step, vmin, vmax = spec
+            new_specs[k] = (start_val, band, step, vmin, vmax)
+        elif len(spec) == 3:
+            _, band, step = spec
+            new_specs[k] = (start_val, band, step)
+        else:
+            raise ValueError(f"PARAM_SPECS[{k}] muss 3- oder 5-Tupel sein, ist aber: {spec}")
+
+    return new_specs
+
+
+
 def main():    
     # --- Schritt 1: Tick-Snapshot aus laufendem Bot ziehen ---
     if SNAPSHOT_ENABLED:
@@ -800,7 +877,9 @@ def main():
             last_lines=SNAPSHOT_LAST_LINES
         )
 
-    keys, combos = build_param_grid(PARAM_SPECS)
+    effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)
+    keys, combos = build_param_grid(effective_specs)
+
     max_runs = len(combos)
 
     # CSV Header
@@ -913,7 +992,7 @@ def main():
 
             export_best_params_from_results(
                 results_csv=RESULTS_CSV_FILE,
-                out_parameter_csv=THIS_DIR / "parameter.csv"
+                out_parameter_csv=PARAMETER_CSV_PATH
             )
 
             return  # parallel fertig
@@ -953,7 +1032,7 @@ def main():
     # --- Nach dem vollständigen Durchlauf: besten Parametersatz exportieren ---
     export_best_params_from_results(
         results_csv=RESULTS_CSV_FILE,
-        out_parameter_csv=THIS_DIR / "parameter.csv"
+        out_parameter_csv=PARAMETER_CSV_PATH
     )
 
         

@@ -88,6 +88,10 @@ SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
 
+MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
+START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
+
+
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
 # ============================================================
@@ -681,6 +685,31 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     any_nonzero_equity = False
 
+
+    # Start-Equity aus results.csv bestimmen (Zeile finden, deren Parameter dem Startsatz entsprechen)
+    start_equity = None
+    if START_PARAMS_STR:
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            cols = line.split(";")
+            ok = True
+            for k, s_val in START_PARAMS_STR.items():
+                if k not in header:
+                    ok = False
+                    break
+                idx = header.index(k)
+                if idx >= len(cols) or cols[idx].strip() != s_val:
+                    ok = False
+                    break
+            if ok:
+                eq_str = cols[equity_idx].strip()
+                if eq_str != "":
+                    start_equity = float(eq_str.replace(",", "."))
+                break
+
+
+
     for line in lines[1:]:
         if not line.strip():
             continue
@@ -697,6 +726,13 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         equity_val = float(equity_str.replace(",", "."))
         if equity_val != 0.0:
             any_nonzero_equity = True
+
+        # B) Improvement-Gate: nur Kandidaten besser als Startsatz zulassen
+        if start_equity is not None and equity_val <= start_equity:
+            continue
+
+        if start_equity is None:
+            print("⚠️ Startsatz in results.csv nicht gefunden -> Improvement-Gate deaktiviert (nur für diesen Lauf).")
 
         # Max suchen; bei Gleichstand gewinnt die erste Zeile => nur ">" verwenden
         if best_equity is None or equity_val > best_equity:
@@ -720,10 +756,12 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if ci < len(best_row):
             closes_val = best_row[ci].strip()
 
-    # Wenn keine Trades geschlossen wurden: NICHT übernehmen
-    if closes_val.strip() == "0":
-        print("ℹ️ Kein Parameter-Export: closes=0 (keine abgeschlossenen Trades).")
+    # Wenn Mindestanzahl Trades NICHT geschlossen wurden: NICHT übernehmen
+    closes_i = int(closes_val) if closes_val.isdigit() else 0
+    if closes_i < MIN_CLOSED_TRADES_FOR_EXPORT:
+        print(f"ℹ️ Kein Parameter-Export: closes={closes_i} < {MIN_CLOSED_TRADES_FOR_EXPORT}.")
         return
+
 
     # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
     # (genau so wird results.csv bei dir geschrieben)
@@ -878,6 +916,10 @@ def main():
         )
 
     effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)
+
+    # Startwerte (Grid-Zentrum) als Strings wie in results.csv
+    START_PARAMS_STR = {k: fmt_de(effective_specs[k][0]) for k in PARAM_SPECS.keys()}
+
     keys, combos = build_param_grid(effective_specs)
 
     max_runs = len(combos)

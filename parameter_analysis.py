@@ -739,6 +739,13 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             best_equity = equity_val
             best_row = cols
 
+    # B) Wenn Improvement-Gate aktiv war, aber keine Verbesserung gefunden wurde: kein Export
+    if start_equity is not None and (best_row is None or best_equity is None):
+        start_de = f"{start_equity:.6f}".replace(".", ",")
+        print(f"ℹ️ Kein Parameter-Export: keine Verbesserung gegenüber Startsatz (start_equity={start_de}).")
+        return
+
+
     # Wenn keine gültige Zeile gefunden wurde
     if best_row is None or best_equity is None:
         print("⚠️ Kein gültiger Ergebnis-Datensatz gefunden (results.csv leer/invalid).")

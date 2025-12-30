@@ -80,7 +80,7 @@ PARAM_ABBR = {
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True
-SNAPSHOT_LAST_LINES = 100000  # << anpassen: wie viele letzte Zeilen übernehmen?
+SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)

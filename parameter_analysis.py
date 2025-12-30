@@ -89,8 +89,10 @@ LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
 
 MIN_CLOSED_TRADES_FOR_EXPORT = 2   # z.B. 10/20/30 – Start: 20
+
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 
+USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)
@@ -934,7 +936,10 @@ def main():
             last_lines=SNAPSHOT_LAST_LINES
         )
 
-    effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)
+    if USE_START_VALUES_FROM_PARAMETER_CSV:
+        effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)
+    else:
+        effective_specs = PARAM_SPECS
 
     # Startwerte (Grid-Zentrum) als Strings wie in results.csv
     global START_PARAMS_STR

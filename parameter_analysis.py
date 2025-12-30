@@ -455,6 +455,11 @@ def patch_bot_for_backtest(broker: BacktestBroker):
     bot.close_position = broker.close_position
     bot.get_positions = broker.get_positions
 
+    # Backtest: Parameter-Reload aus parameter.csv deaktivieren,
+    # sonst überschreibt der Bot pro Candle-Close die Grid-Parameter.
+    if hasattr(bot, "load_parameters"):
+        bot.load_parameters = lambda *args, **kwargs: None
+
     # Zeitfunktionen innerhalb des Bot-Moduls werden im Replay gesetzt (tick-basiert).
     # Hier nur Platzhalter; im Replay pro Tick aktualisieren wir "bot.time.time" / "bot.time.monotonic".
     pass
@@ -1012,7 +1017,7 @@ def main():
                             run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
                             saldo_str = f"{m['equity']:.2f}".replace(".", ",")
                             print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
-                                  f"Saldo={saldo_str} | Trades={m['closes']} | {_param_str(p)}")
+                                  f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
 
                             csv_vals = [
                                 run_time_str,

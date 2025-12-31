@@ -80,7 +80,9 @@ PARAM_ABBR = {
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True
-SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
+DEFAULT_SNAPSHOT_LAST_LINES = 50000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
+SNAPSHOT_LAST_LINES = DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst
+ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
@@ -280,7 +282,7 @@ def _resolve_bot_tick_file(tradingbot_dir: Path, epic: str) -> Path:
     raise FileNotFoundError(f"Keine Tickdatei für {epic} gefunden. Geprüft: {candidates}")
 
 
-def snapshot_ticks_from_bot(instruments: List[str], tradingbot_dir: Path, dest_ticks_dir: Path, last_lines: int) -> None:
+def snapshot_ticks_from_bot(instruments: List[str], tradingbot_dir: Path, dest_ticks_dir: Path, last_lines: int) -> Tuple[Optional[int], Optional[int], str]:
     dest_ticks_dir.mkdir(parents=True, exist_ok=True)
 
     for epic in instruments:
@@ -296,12 +298,14 @@ def snapshot_ticks_from_bot(instruments: List[str], tradingbot_dir: Path, dest_t
         os.replace(tmp, dst)
 
         # --- nice-to-have: Gesamtzeitraum des Snapshots loggen (aus den geschriebenen Dateien) ---
-        t0_ms, t1_ms, dur_hms = get_snapshot_time_range(instruments, dest_ticks_dir)
-        if t0_ms is not None and t1_ms is not None:
-            t0_str = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-            t1_str = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-            
-        print(f"🧩 SNAPSHOT: {epic} ← {src.name} | letzte {last_lines} Zeilen → {dst} ({dur_hms})")
+        print(f"🧩 SNAPSHOT: {epic} ← {src.name} | letzte {last_lines} Zeilen → {dst}")
+
+    # --- Gesamtzeitraum des Snapshots loggen (einmal nach vollständigem Schreiben) ---
+    t0_ms, t1_ms, dur_hms = get_snapshot_time_range(instruments, dest_ticks_dir)
+    print(f"🧩 SNAPSHOT: Zeitraum gesamt ({dur_hms})")
+
+    return t0_ms, t1_ms, dur_hms
+
 
 # ============================================================
 # Tick Loader (pro Instrument: ticks_<EPIC>.csv)
@@ -936,15 +940,37 @@ def apply_start_values_from_file(param_specs: Dict[str, Tuple[Any, ...]], param_
 
 
 
-def main():    
+def main():
+    global SNAPSHOT_LAST_LINES
+    
     # --- Schritt 1: Tick-Snapshot aus laufendem Bot ziehen ---
     if SNAPSHOT_ENABLED:
-        snapshot_ticks_from_bot(
+        t0_ms, t1_ms, dur_hms = snapshot_ticks_from_bot(
             instruments=INSTRUMENTS,
             tradingbot_dir=TRADINGBOT_DIR,
             dest_ticks_dir=TICKS_DIR,
             last_lines=SNAPSHOT_LAST_LINES
         )
+
+        # --- AUTO: SNAPSHOT_LAST_LINES an Zielzeitraum anpassen (max = DEFAULT/aktueller Startwert) ---
+        if t0_ms is not None and t1_ms is not None and t1_ms > t0_ms:
+            actual_sec = (t1_ms - t0_ms) / 1000.0
+            target_sec = ESTIMATED_PERIOD_MINUTES * 60.0
+
+            new_lines = int(round(SNAPSHOT_LAST_LINES * (target_sec / actual_sec)))
+
+            # max_lines = DEFAULT_SNAPSHOT_LAST_LINES (bei dir: initialer Startwert)
+            if new_lines > 50000:
+                new_lines = 50000
+
+            if new_lines != SNAPSHOT_LAST_LINES:
+                print(f"🧩 SNAPSHOT-AUTO: target={ESTIMATED_PERIOD_MINUTES:.1f}min actual={actual_sec/60:.1f}min -> next_lines={new_lines}")
+
+            # für nächsten Lauf übernehmen
+            SNAPSHOT_LAST_LINES = new_lines
+        else:
+            print("⚠️ SNAPSHOT-AUTO: Zeitraum konnte nicht bestimmt werden -> last_lines unverändert.")
+
 
     if USE_START_VALUES_FROM_PARAMETER_CSV:
         effective_specs = apply_start_values_from_file(PARAM_SPECS, PARAMETER_CSV_PATH)

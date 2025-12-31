@@ -52,7 +52,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 #   name,                                   initial , band, step, min, max
 PARAM_SPECS = {
     "EMA_FAST":                             (10, 2, 2, 2, 20),
-    "EMA_SLOW":                             (18, 2, 2, 2, 50),
+    "EMA_SLOW":                             (18, 2, 2, 4, 50),
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000, 0.0000, 50),
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000, 0.0000, 5),
     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
@@ -88,7 +88,7 @@ SNAPSHOT_LAST_LINES = 50000  # << anpassen: wie viele letzte Zeilen übernehmen?
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
 
-MIN_CLOSED_TRADES_FOR_EXPORT = 2   # z.B. 10/20/30 – Start: 20
+MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 
@@ -759,13 +759,23 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             best_row = cols
             best_closes = closes_i
 
-
     # B) Wenn Improvement-Gate aktiv war, aber keine Verbesserung gefunden wurde: kein Export
     if start_equity is not None and (best_row is None or best_equity is None):
         start_de = f"{start_equity:.6f}".replace(".", ",")
-        print(f"ℹ️ Kein Parameter-Export: keine Verbesserung gegenüber Startsatz (start_equity={start_de}).")
-        return
 
+        # Startsatz kompakt ausgeben (weiterverwenden)
+        def _param_str(d: dict) -> str:
+            # Reihenfolge wie PARAM_SPECS (damit es lesbar/konstant bleibt)
+            parts = []
+            for k in PARAM_SPECS.keys():
+                if k in d:
+                    parts.append(f"{k}={d[k]}")
+            return " ".join(parts)
+
+        print(f"ℹ️ Kein Parameter-Export: keine Verbesserung gegenüber Startsatz (start_equity={start_de}).")
+        if START_PARAMS_STR:
+            print(f"ℹ️ Verwende weiter Parameter: {_param_str(START_PARAMS_STR)}")
+        return
 
     # Wenn keine gültige Zeile gefunden wurde
     if best_row is None or best_equity is None:

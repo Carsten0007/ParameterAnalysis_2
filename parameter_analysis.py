@@ -88,7 +88,7 @@ ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums j
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 60      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
 
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 

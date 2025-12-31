@@ -39,7 +39,7 @@ ENABLE_PROFILING = False   # für Laufzeit Tracking, bei Bedarf True
 
 # --- Parallelisierung ---
 ENABLE_PARALLEL = True
-MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
+MAX_WORKERS = max(2, min(12, (os.cpu_count() or 2) - 2)) # MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
 MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 
 # --- Output/Speed ---

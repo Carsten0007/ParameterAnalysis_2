@@ -24,10 +24,8 @@ THIS_DIR = Path(__file__).resolve().parent
 TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<EPIC>.csv
 TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
 PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter.csv"
-
 RESULTS_DIR = THIS_DIR / "results"
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
-
 PROFILE_OUT_FILE = THIS_DIR / "profile.txt"
 
 # --- Run/Instrumente ---
@@ -46,8 +44,29 @@ MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 SUPPRESS_BOT_OUTPUT = True
 BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = schnell
 
+# ============================================================
+# SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
+# ============================================================
+SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
+DEFAULT_SNAPSHOT_LAST_LINES = 50000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
+SNAPSHOT_LAST_LINES = DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst
+ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+
+# ============================================================
+# LOOP-BETRIEB (kontinuierlicher Batch)
+# ============================================================
+LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
+LOOP_SLEEP_SECONDS = 300      # Wartezeit zwischen Läufen (Sekunden)
+MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
+START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
+USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
+
+
+# ============================================================
 # --- Parameter-Spezifikation ---
 # band=0 oder step=0 => keine Variation
+# initial, band, step, min, max
+# ============================================================
 
 #   name,                                   initial , band, step, min, max
 PARAM_SPECS = {
@@ -55,6 +74,7 @@ PARAM_SPECS = {
     "EMA_SLOW":                             (18, 2, 2, 4, 50),
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000, 0.0000, 50),
     "SIGNAL_MOMENTUM_TOLERANCE":            (2.0000, 1.0000, 1.0000, 0.0000, 5),
+    "MIN_CLOSE_DELTA_SPREADS":              (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_STOP_PCT":                    (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_SET_CALM_DOWN":               (0.5000, 0.0000, 0.0000, 0.0000, 1),
@@ -68,33 +88,14 @@ PARAM_ABBR = {
     "EMA_SLOW": "E_SLOW",
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": "SIG_MPDS",
     "SIGNAL_MOMENTUM_TOLERANCE": "SIG_MT",
-    "STOP_LOSS_PCT": "SL_PCT",
-    "TRAILING_STOP_PCT": "TS_PCT",
+    "MIN_CLOSE_DELTA_SPREADS": "DS",
+    "STOP_LOSS_PCT": "SL",
+    "TRAILING_STOP_PCT": "TS",
     "TRAILING_SET_CALM_DOWN": "TS_CD",
-    "TAKE_PROFIT_PCT": "TP_PCT",
-    "BREAK_EVEN_STOP_PCT": "BE_PCT",
-    "BREAK_EVEN_BUFFER_PCT": "BE_BUF_PCT",
+    "TAKE_PROFIT_PCT": "TP",
+    "BREAK_EVEN_STOP_PCT": "BE",
+    "BREAK_EVEN_BUFFER_PCT": "BE_BUF",
 }
-
-# ============================================================
-# SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
-# ============================================================
-SNAPSHOT_ENABLED = True
-DEFAULT_SNAPSHOT_LAST_LINES = 50000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst
-ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
-
-# ============================================================
-# LOOP-BETRIEB (kontinuierlicher Batch)
-# ============================================================
-LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 300      # Wartezeit zwischen Läufen (Sekunden)
-
-MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
-
-START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
-
-USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
 
 # ============================================================
 # Import TradingBot aus Nachbarordner (ohne Kopie)

@@ -12,7 +12,7 @@ import cProfile
 import pstats
 import os
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 import time
 
 # ============================================================
@@ -1068,13 +1068,15 @@ def main():
 
                 # Laufende Abarbeitung
                 while futures:
-                    # immer genau ein fertiges Future ziehen (und danach nachschieben)
-                    for fut in as_completed(list(futures.keys())):
+                    # ✅ Quick Win D: effizient auf mindestens ein fertiges Future warten (kein list(...), kein as_completed-Neustart)
+                    done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+
+                    # Es können auch mehrere gleichzeitig fertig sein -> alle abarbeiten
+                    for fut in done:
                         run_id = futures.pop(fut)
                         try:
                             rid, metrics, params = fut.result()
                         except Exception as e:
-                            # Harte Fehler lieber sichtbar machen
                             raise RuntimeError(f"Worker-Fehler in Run {run_id}: {e}") from e
 
                         pending[rid] = (rid, metrics, params)
@@ -1088,54 +1090,53 @@ def main():
                         except StopIteration:
                             pass
 
-                        # In Ordnung (1..N) wegschreiben/ausgeben, sobald verfügbar
-                        while next_to_write in pending:
-                            _, m, p = pending.pop(next_to_write)
+                    # In Ordnung (1..N) wegschreiben/ausgeben, sobald verfügbar
+                    while next_to_write in pending:
+                        _, m, p = pending.pop(next_to_write)
 
-                            run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-                            saldo_str = f"{m['equity']:.2f}".replace(".", ",")
+                        run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
+                        saldo_str = f"{m['equity']:.2f}".replace(".", ",")
 
-                            # ✅ Quick Win: Console-Output stark reduzieren
-                            if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
-                                print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
-                                    f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
+                        # ✅ Quick Win: Console-Output stark reduzieren
+                        if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
+                            print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
+                                f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
 
-                            # ✅ Improvement-Log: nur wenn Equity besser ist oder bei gleicher Equity mehr Closes
-                            eq = round(float(m["equity"]), 2)
-                            cl = int(m.get("closes", 0))
+                        # ✅ NEW BEST Tracking (Equity besser oder bei gleicher Equity mehr closes)
+                        eq = round(float(m["equity"]), 2)
+                        cl = int(m.get("closes", 0))
 
-                            is_better = False
-                            if best_equity_seen is None:
-                                is_better = True
-                            elif eq > best_equity_seen:
-                                is_better = True
-                            elif eq == best_equity_seen and (best_closes_seen is None or cl > best_closes_seen):
-                                is_better = True
+                        is_better = False
+                        if best_equity_seen is None:
+                            is_better = True
+                        elif eq > best_equity_seen:
+                            is_better = True
+                        elif eq == best_equity_seen and (best_closes_seen is None or cl > best_closes_seen):
+                            is_better = True
 
-                            if is_better:
-                                best_equity_seen = eq
-                                best_closes_seen = cl
-                                best_run_seen = next_to_write  # ✅ korrekt: aktueller Run
+                        if is_better:
+                            best_equity_seen = eq
+                            best_closes_seen = cl
+                            best_run_seen = next_to_write
 
-                                best_de = f"{eq:.2f}".replace(".", ",")
-                                print(f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} | {_param_str(p)}")
+                            best_de = f"{eq:.2f}".replace(".", ",")
+                            print(f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} | {_param_str(p)}")
 
-                            csv_vals = [
-                                run_time_str,
-                                str(next_to_write),
-                                str(max_runs),
-                                fmt_de(m["equity"]),
-                                fmt_de(m["realized"]),
-                                fmt_de(m["unrealized"]),
-                                str(m["opens"]),
-                                str(m["closes"]),
-                                str(m["open_positions_end"]),
-                            ] + [fmt_de(p[k]) for k in PARAM_SPECS.keys()]
-                            f_csv.write(";".join(csv_vals) + "\n")
+                        csv_vals = [
+                            run_time_str,
+                            str(next_to_write),
+                            str(max_runs),
+                            fmt_de(m["equity"]),
+                            fmt_de(m["realized"]),
+                            fmt_de(m["unrealized"]),
+                            str(m["opens"]),
+                            str(m["closes"]),
+                            str(m["open_positions_end"]),
+                        ] + [fmt_de(p[k]) for k in PARAM_SPECS.keys()]
+                        f_csv.write(";".join(csv_vals) + "\n")
 
-                            next_to_write += 1
+                        next_to_write += 1
 
-                        break  # wichtig: nur 1 completion pro while-Iteration
 
             # --- Nach dem vollständigen Durchlauf: besten Parametersatz exportieren ---
             f_csv.flush()

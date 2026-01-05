@@ -1042,6 +1042,11 @@ def main():
             pending: Dict[int, Tuple[int, Dict[str, Any], Dict[str, Any]]] = {}
             next_to_write = 1
 
+            # ✅ NEW BEST Tracking (nur für Log-Ausgabe; CSV bleibt vollständig)
+            best_equity_seen = None
+            best_closes_seen = None
+            best_run_seen = None
+
             combo_iter = iter(enumerate(combos, 1))
 
             with ProcessPoolExecutor(
@@ -1089,10 +1094,31 @@ def main():
 
                             run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
                             saldo_str = f"{m['equity']:.2f}".replace(".", ",")
+
                             # ✅ Quick Win: Console-Output stark reduzieren
                             if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
                                 print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
                                     f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
+
+                            # ✅ Improvement-Log: nur wenn Equity besser ist oder bei gleicher Equity mehr Closes
+                            eq = round(float(m["equity"]), 2)
+                            cl = int(m.get("closes", 0))
+
+                            is_better = False
+                            if best_equity_seen is None:
+                                is_better = True
+                            elif eq > best_equity_seen:
+                                is_better = True
+                            elif eq == best_equity_seen and (best_closes_seen is None or cl > best_closes_seen):
+                                is_better = True
+
+                            if is_better:
+                                best_equity_seen = eq
+                                best_closes_seen = cl
+                                best_run_seen = next_to_write  # ✅ korrekt: aktueller Run
+
+                                best_de = f"{eq:.2f}".replace(".", ",")
+                                print(f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} | {_param_str(p)}")
 
                             csv_vals = [
                                 run_time_str,

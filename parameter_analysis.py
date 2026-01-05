@@ -26,7 +26,7 @@ TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
 PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter.csv"
 RESULTS_DIR = THIS_DIR / "results"
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
-PROFILE_OUT_FILE = THIS_DIR / "profile.txt"
+PROFILE_OUT_FILE = THIS_DIR / "profile_bot_2.txt"
 
 # --- Run/Instrumente ---
 INSTRUMENTS = ["ETHUSD"]  # später z.B. ["ETHUSD", "BTCUSD"]
@@ -50,7 +50,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 70000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
 SNAPSHOT_LAST_LINES = 10000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
-ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+ESTIMATED_PERIOD_MINUTES = 90  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
@@ -73,14 +73,14 @@ PARAM_SPECS = {
     "EMA_FAST":                             (5, 1, 1, 3, 20),                          # (10, 1, 1, 2, 20),
     "EMA_SLOW":                             (11, 1, 1, 5, 50),                          # (18, 1, 1, 4, 50),
     "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000, 1.0000, 50.00),       # (4.0000, 1.0000, 1.0000, 0.0000, 50),
-    "SIGNAL_MOMENTUM_TOLERANCE":            (1.0000, 0.1000, 0.1000, 0.0000, 5.000),        # (2.0000, 1.0000, 1.0000, 0.0000, 5),
+    "SIGNAL_MOMENTUM_TOLERANCE":            (1.0000, 0.2000, 0.2000, 0.0000, 5.000),        # (2.0000, 1.0000, 1.0000, 0.0000, 5),
     "MIN_CLOSE_DELTA_SPREADS":              (1.0000, 0.5000, 0.1000, 0.5000, 10.00),     # (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
     "STOP_LOSS_PCT":                        (0.0030, 0.0005, 0.0005, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_STOP_PCT":                    (0.0030, 0.0005, 0.0005, 0.0000, 0.004),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
+    "TRAILING_STOP_PCT":                    (0.0030, 0.0005, 0.0005, 0.0000, 0.005),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_SET_CALM_DOWN":               (0.2000, 0.0000, 0.0000, 0.0000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
     "TAKE_PROFIT_PCT":                      (0.0060, 0.0005, 0.0005, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
-    "BREAK_EVEN_STOP_PCT":                  (0.0010, 0.0005, 0.0005, 0.0000, 0.0015),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
-    "BREAK_EVEN_BUFFER_PCT":                (0.0002, 0.0000, 0.0000, 0.0000, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
+    "BREAK_EVEN_STOP_PCT":                  (0.0002, 0.0002, 0.0002, 0.0000, 0.003),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
+    "BREAK_EVEN_BUFFER_PCT":                (0.0005, 0.0000, 0.0000, 0.0005, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
     }
 
 PARAM_ABBR = {
@@ -769,17 +769,32 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         start_de = f"{start_equity:.6f}".replace(".", ",")
 
         # Startsatz kompakt ausgeben (weiterverwenden)
-        def _param_str(d: dict) -> str:
+        # Startsatz zeilenweise ausgeben (weiterverwenden)
+        def _param_lines(d: dict) -> str:
             # Reihenfolge wie PARAM_SPECS (damit es lesbar/konstant bleibt)
-            parts = []
+            lines = []
             for k in PARAM_SPECS.keys():
                 if k in d:
-                    parts.append(f"{k}={d[k]}")
-            return " ".join(parts)
+                    v = d[k]
+                    # Formatierung: ints ohne Nachkommastellen, floats mit 6 und DE-Komma
+                    if isinstance(v, bool):
+                        s = "True" if v else "False"
+                    elif isinstance(v, int):
+                        s = str(v)
+                    else:
+                        # alles andere als float behandeln (z.B. str) -> str()
+                        try:
+                            s = f"{float(v):.6f}".replace(".", ",")
+                        except Exception:
+                            s = str(v)
+
+                    lines.append(f"{k} = {s}")
+            return "\n".join(lines)
 
         print(f"ℹ️ Kein Parameter-Export: keine Verbesserung gegenüber Startsatz (start_equity={start_de}).")
         if START_PARAMS_STR:
-            print(f"ℹ️ Verwende weiter Parameter: {_param_str(START_PARAMS_STR)}")
+            print("ℹ️ Verwende weiter Parameter:")
+            print(_param_lines(START_PARAMS_STR))
         return
 
     # Wenn keine gültige Zeile gefunden wurde

@@ -489,13 +489,20 @@ def run_single_backtest(
     # Candle-States wie im Bot-Loop
     states = {epic: {"minute": None, "bar": None} for epic in instruments}
 
-    # deterministische „Zeit“ im Bot:
-    # - time.time()   -> ts in Sekunden (UTC ist egal, es geht nur um Throttle)
-    # - time.monotonic() -> wir verwenden ebenfalls ts in Sekunden, reicht für Cooldown/Delta
+    # ✅ Quick Win C: deterministische „Zeit“ im Bot ohne per-Tick Lambda-Erzeugung
+    # Wir hooken time.time/monotonic einmalig und setzen pro Tick nur noch bot._BT_NOW_SEC.
+    if not hasattr(bot, "_BT_NOW_SEC"):
+        bot._BT_NOW_SEC = 0.0
+
+        def _bt_time():
+            return bot._BT_NOW_SEC
+
+        bot.time.time = _bt_time
+        bot.time.monotonic = _bt_time
+
     def set_bot_time(ts_ms: int):
-        t_sec = ts_ms / 1000.0
-        bot.time.time = lambda: t_sec
-        bot.time.monotonic = lambda: t_sec
+        bot._BT_NOW_SEC = ts_ms / 1000.0
+
 
     last_ts = None
 
@@ -1082,8 +1089,10 @@ def main():
 
                             run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
                             saldo_str = f"{m['equity']:.2f}".replace(".", ",")
-                            print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
-                                  f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
+                            # ✅ Quick Win: Console-Output stark reduzieren
+                            if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
+                                print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
+                                    f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
 
                             csv_vals = [
                                 run_time_str,

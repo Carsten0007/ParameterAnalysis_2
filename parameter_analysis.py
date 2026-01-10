@@ -49,8 +49,8 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 70000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 10000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
-ESTIMATED_PERIOD_MINUTES = 90  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+SNAPSHOT_LAST_LINES = 15000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+ESTIMATED_PERIOD_MINUTES = 60  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
@@ -70,16 +70,16 @@ USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.c
 
 #   name,                                   initial , band, step, min, max              # ~ bewährt
 PARAM_SPECS = {
-    "EMA_FAST":                             (5, 1, 1, 3, 20),                          # (10, 1, 1, 2, 20),
-    "EMA_SLOW":                             (11, 1, 1, 5, 50),                          # (18, 1, 1, 4, 50),
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 1.0000, 1.0000, 1.0000, 50.00),       # (4.0000, 1.0000, 1.0000, 0.0000, 50),
-    "SIGNAL_MOMENTUM_TOLERANCE":            (1.0000, 0.2000, 0.2000, 0.0000, 5.000),        # (2.0000, 1.0000, 1.0000, 0.0000, 5),
-    "MIN_CLOSE_DELTA_SPREADS":              (1.0000, 0.5000, 0.1000, 0.5000, 10.00),     # (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
-    "STOP_LOSS_PCT":                        (0.0030, 0.0005, 0.0005, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_STOP_PCT":                    (0.0030, 0.0005, 0.0005, 0.0000, 0.005),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_SET_CALM_DOWN":               (0.2000, 0.0100, 0.0100, 0.0000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
-    "TAKE_PROFIT_PCT":                      (0.0060, 0.0005, 0.0005, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
-    "BREAK_EVEN_STOP_PCT":                  (0.0002, 0.0002, 0.0002, 0.0000, 0.003),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
+    "EMA_FAST":                             (10, 1, 1, 3, 20),                          # (10, 1, 1, 2, 20),
+    "EMA_SLOW":                             (18, 1, 1, 5, 50),                          # (18, 1, 1, 4, 50),
+    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000, 0.0000, 50.00),       # (4.0000, 1.0000, 1.0000, 0.0000, 50),
+    "SIGNAL_MOMENTUM_TOLERANCE":            (1.0000, 0.0000, 0.0000, 0.0000, 5.000),        # (2.0000, 1.0000, 1.0000, 0.0000, 5),
+    "MIN_CLOSE_DELTA_SPREADS":              (1.1000, 0.0000, 0.0000, 0.5000, 10.00),     # (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
+    "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0005, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
+    "TRAILING_STOP_PCT":                    (0.0050, 0.0010, 0.0005, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
+    "TRAILING_SET_CALM_DOWN":               (0.1000, 0.1000, 0.0500, 0.1000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
+    "TAKE_PROFIT_PCT":                      (0.0060, 0.0010, 0.0005, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
+    "BREAK_EVEN_STOP_PCT":                  (0.0045, 0.0010, 0.0005, 0.0000, 0.100),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
     "BREAK_EVEN_BUFFER_PCT":                (0.0005, 0.0000, 0.0000, 0.0005, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
     }
 

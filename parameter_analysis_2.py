@@ -22,8 +22,8 @@ import time
 # --- Grundpfade ---
 THIS_DIR = Path(__file__).resolve().parent
 TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<EPIC>.csv
-TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot" # passt bei deiner Struktur
-PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter.csv"
+TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot_2" # passt bei deiner Struktur
+PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter_2.csv" # temporär "_2"
 RESULTS_DIR = THIS_DIR / "results"
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
 PROFILE_OUT_FILE = THIS_DIR / "profile_bot_2.txt"
@@ -109,7 +109,7 @@ if str(THIS_DIR) not in sys.path:
 if str(TRADINGBOT_DIR) not in sys.path:
     sys.path.insert(1, str(TRADINGBOT_DIR))
 
-import tradeingbot as bot  # nutzt die Bot-Logik 1:1
+import tradingbot_2 as bot  # nutzt die Bot-Logik 1:1
 
 
 # ============================================================

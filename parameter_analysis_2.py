@@ -55,7 +55,7 @@ ESTIMATED_PERIOD_MINUTES = 60  # gewünschte Dauer des analysierten Zeitraums je
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
-LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
+LOOP_ENABLED = False          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 300      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
@@ -72,9 +72,10 @@ USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.c
 PARAM_SPECS = {
     "EMA_FAST":                             (10, 1, 1, 3, 20),                          # (10, 1, 1, 2, 20),
     "EMA_SLOW":                             (18, 1, 1, 5, 50),                          # (18, 1, 1, 4, 50),
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS":    (4.0000, 0.0000, 0.0000, 0.0000, 50.00),       # (4.0000, 1.0000, 1.0000, 0.0000, 50),
-    "SIGNAL_MOMENTUM_TOLERANCE":            (1.0000, 0.0000, 0.0000, 0.0000, 5.000),        # (2.0000, 1.0000, 1.0000, 0.0000, 5),
-    "MIN_CLOSE_DELTA_SPREADS":              (1.1000, 0.0000, 0.0000, 0.5000, 10.00),     # (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS":(4.0000, 0.0000, 0.0000, 0.0000, 50.00),       # umbenannt (4.0000, 1.0000, 1.0000, 0.0000, 50),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": (6.0000, 0.0000, 0.0000, 0.0000, 5.000),        # umbenannt (2.0000, 1.0000, 1.0000, 0.0000, 5),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":      (2.0000, 0.0000, 0.0000, 0.5000, 10.00),     # umbenannt (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
+    "REGIME_MIN_DIRECTIONALITY":            (0.3500, 0.0000, 0.0000, 0.5000, 10.00),     # neu
     "STOP_LOSS_PCT":                        (0.0030, 0.0010, 0.0005, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_STOP_PCT":                    (0.0050, 0.0010, 0.0005, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_SET_CALM_DOWN":               (0.1000, 0.1000, 0.0500, 0.1000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
@@ -86,9 +87,10 @@ PARAM_SPECS = {
 PARAM_ABBR = {
     "EMA_FAST": "E_FAST",
     "EMA_SLOW": "E_SLOW",
-    "SIGNAL_MAX_PRICE_DISTANCE_SPREADS": "SIG_MPDS",
-    "SIGNAL_MOMENTUM_TOLERANCE": "SIG_MT",
-    "MIN_CLOSE_DELTA_SPREADS": "DS",
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": "PB_NMD",
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": "PB_FDS",
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS": "CDS",
+    "REGIME_MIN_DIRECTIONALITY": "RMD",
     "STOP_LOSS_PCT": "SL",
     "TRAILING_STOP_PCT": "TS",
     "TRAILING_SET_CALM_DOWN": "TS_CD",

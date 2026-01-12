@@ -222,13 +222,14 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
                 return False
             # Mindestabstand entfernt (nur fast < slow)
 
-        # # 3) Pullback: "far min" darf nicht unter "near max" liegen
-        # if ("PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS" in d and
-        #     "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS" in d):
-        #     near_max = float(d["PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS"])
-        #     far_min  = float(d["PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS"])
-        #     if far_min < near_max:
-        #         return False
+        # 3) Pullback: FAR muss strikt größer als NEAR sein (sonst ist das Armed→Return-Gate unlogisch)
+        if ("PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS" in d and
+            "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS" in d):
+            near_max = float(d["PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS"])
+            far_min  = float(d["PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS"])
+            if far_min <= near_max:
+                return False
+
         return True
 
     before = len(combos)

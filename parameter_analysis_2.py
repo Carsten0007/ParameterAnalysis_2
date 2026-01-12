@@ -23,7 +23,7 @@ import time
 THIS_DIR = Path(__file__).resolve().parent
 TICKS_DIR = THIS_DIR / "ticks"                 # ParameterAnalysis\ticks\ticks_<EPIC>.csv
 TRADINGBOT_DIR = THIS_DIR.parent / "TradingBot_2" # passt bei deiner Struktur
-PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter_2.csv" # temporär "_2"
+PARAMETER_CSV_PATH = TRADINGBOT_DIR / "parameter.csv" # temporär "_2"
 RESULTS_DIR = THIS_DIR / "results"
 RESULTS_CSV_FILE = RESULTS_DIR / "results.csv"
 PROFILE_OUT_FILE = THIS_DIR / "profile_bot_2.txt"
@@ -49,13 +49,13 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 70000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 20000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
-ESTIMATED_PERIOD_MINUTES = 180  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+SNAPSHOT_LAST_LINES = 40000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+ESTIMATED_PERIOD_MINUTES = 120  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
-LOOP_ENABLED = False          # True = Dauerbetrieb, False = nur ein Durchlauf
+LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 300      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
@@ -70,17 +70,17 @@ USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.c
 
 #   name,                                   initial , band, step, min, max              # ~ bewährt
 PARAM_SPECS = {
-    "EMA_FAST":                             (8, 5, 1, 3, 20),                          # (10, 1, 1, 2, 20),
-    "EMA_SLOW":                             (10, 5, 1, 5, 50),                          # (18, 1, 1, 4, 50),
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS":(4.0000, 1.0000, 1.0000, 0.0000, 50.00),       # umbenannt (4.0000, 1.0000, 1.0000, 0.0000, 50),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": (6.0000, 1.0000, 1.0000, 0.0000, 10.00),        # umbenannt (2.0000, 1.0000, 1.0000, 0.0000, 5),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":      (0.5000, 0.5000, 0.1000, 0.0000, 10.00),     # umbenannt (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
-    "REGIME_MIN_DIRECTIONALITY":            (0.3500, 0.0500, 0.0500, 0.1000, 1.000),     # neu
+    "EMA_FAST":                             (3, 5, 1, 3, 20),                          # (10, 1, 1, 2, 20),
+    "EMA_SLOW":                             (7, 5, 1, 5, 50),                          # (18, 1, 1, 4, 50),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS":(6.0000, 2.0000, 1.0000, 0.0000, 50.00),       # umbenannt (4.0000, 1.0000, 1.0000, 0.0000, 50),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": (0.5000, 0.4000, 0.2000, 0.1000, 10.00),        # umbenannt (2.0000, 1.0000, 1.0000, 0.0000, 5),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":      (0.3000, 0.3000, 0.1000, 0.0000, 10.00),     # umbenannt (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
+    "REGIME_MIN_DIRECTIONALITY":            (0.0500, 0.1000, 0.1000, 0.0500, 1.000),     # neu
     "STOP_LOSS_PCT":                        (0.0030, 0.0000, 0.0000, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_STOP_PCT":                    (0.0010, 0.0000, 0.0000, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
+    "TRAILING_STOP_PCT":                    (0.0050, 0.0000, 0.0000, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
     "TRAILING_SET_CALM_DOWN":               (0.1000, 0.0000, 0.0000, 0.1000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
-    "TAKE_PROFIT_PCT":                      (0.0060, 0.0000, 0.0000, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
-    "BREAK_EVEN_STOP_PCT":                  (0.0020, 0.0000, 0.0000, 0.0000, 0.100),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
+    "TAKE_PROFIT_PCT":                      (0.0100, 0.0000, 0.0000, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
+    "BREAK_EVEN_STOP_PCT":                  (0.0005, 0.0000, 0.0000, 0.0000, 0.100),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
     "BREAK_EVEN_BUFFER_PCT":                (0.0005, 0.0000, 0.0000, 0.0005, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
     }
 
@@ -209,9 +209,35 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
         value_lists.append(vals)
 
     combos = list(itertools.product(*value_lists))
+
+    # --- Kombinationssperre (EMA/Pullback) ---
+    def _combo_ok(keys, combo):
+        d = dict(zip(keys, combo))
+
+        # 1) EMA: Fast muss wirklich schneller sein als Slow
+        if "EMA_FAST" in d and "EMA_SLOW" in d:
+            ef = int(d["EMA_FAST"])
+            es = int(d["EMA_SLOW"])
+            if ef >= es:
+                return False
+            # Mindestabstand entfernt (nur fast < slow)
+
+        # 3) Pullback: "far min" darf nicht unter "near max" liegen
+        if ("PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS" in d and
+            "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS" in d):
+            near_max = float(d["PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS"])
+            far_min  = float(d["PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS"])
+            if far_min < near_max:
+                return False
+        return True
+
+    before = len(combos)
+    combos = [c for c in combos if _combo_ok(keys, c)]
+    removed = before - len(combos)
+    if removed > 0:
+        print(f"🧠 Kombinationssperre aktiv: {removed} Kombinationen verworfen (von {before} → {len(combos)})")
+
     return keys, combos
-
-
 
 # ============================================================
 # Worker-Cache + Worker-Funktionen

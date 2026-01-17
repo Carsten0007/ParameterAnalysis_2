@@ -48,15 +48,15 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
-DEFAULT_SNAPSHOT_LAST_LINES = 70000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 40000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
-ESTIMATED_PERIOD_MINUTES = 120  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+DEFAULT_SNAPSHOT_LAST_LINES = 200000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
+SNAPSHOT_LAST_LINES = 150000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 300      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
@@ -68,21 +68,48 @@ USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.c
 # initial, band, step, min, max
 # ============================================================
 
-#   name,                                   initial , band, step, min, max              # ~ bewährt
+# #   name,                                   initial , band, step, min, max              # ~ bewährt
+# PARAM_SPECS = {
+#     "EMA_FAST":                             (3, 0, 0, 3, 20),                          # (10, 1, 1, 2, 20),
+#     "EMA_SLOW":                             (7, 0, 0, 5, 50),                          # (18, 1, 1, 4, 50),
+#     "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS":(1.5000, 0.0000, 0.0000, 0.0000, 50.00),       # umbenannt (4.0000, 1.0000, 1.0000, 0.0000, 50),
+#     "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": (1.7000, 0.0000, 0.0000, 0.0000, 50.00),        # umbenannt (2.0000, 1.0000, 1.0000, 0.0000, 5),
+#     "CONFIRM_MIN_CLOSE_DELTA_SPREADS":      (0.2000, 0.2000, 0.1000, 0.0000, 10.00),     # umbenannt (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
+#     "REGIME_MIN_DIRECTIONALITY":            (0.0500, 0.2000, 0.1000, 0.0000, 1.000),     # neu
+#     "STOP_LOSS_PCT":                        (0.0030, 0.0020, 0.0010, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
+#     "TRAILING_STOP_PCT":                    (0.0050, 0.0020, 0.0010, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
+#     "TRAILING_SET_CALM_DOWN":               (0.1000, 0.0000, 0.0000, 0.1000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
+#     "TAKE_PROFIT_PCT":                      (0.0100, 0.0200, 0.0100, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
+#     "BREAK_EVEN_STOP_PCT":                  (0.0005, 0.0020, 0.0010, 0.0000, 0.100),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
+#     "BREAK_EVEN_BUFFER_PCT":                (0.0005, 0.0000, 0.0000, 0.0005, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
+#     }
+# comment 16.01.2026 00:11
+
+
+# Autopilot: Entry-Parameter variieren, Exit-Parameter fix lassen
 PARAM_SPECS = {
-    "EMA_FAST":                             (3, 5, 1, 3, 20),                          # (10, 1, 1, 2, 20),
-    "EMA_SLOW":                             (7, 5, 1, 5, 50),                          # (18, 1, 1, 4, 50),
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS":(6.0000, 2.0000, 1.0000, 0.0000, 50.00),       # umbenannt (4.0000, 1.0000, 1.0000, 0.0000, 50),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS": (0.5000, 0.4000, 0.2000, 0.1000, 10.00),        # umbenannt (2.0000, 1.0000, 1.0000, 0.0000, 5),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":      (0.3000, 0.3000, 0.1000, 0.0000, 10.00),     # umbenannt (2.0000, 0.5000, 0.5000, 0.0000, 10.0),
-    "REGIME_MIN_DIRECTIONALITY":            (0.0500, 0.1000, 0.1000, 0.0500, 1.000),     # neu
-    "STOP_LOSS_PCT":                        (0.0030, 0.0000, 0.0000, 0.0000, 0.010),     # (0.0030, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_STOP_PCT":                    (0.0050, 0.0000, 0.0000, 0.0000, 0.010),     # (0.0050, 0.0010, 0.0010, 0.0000, 0.01),
-    "TRAILING_SET_CALM_DOWN":               (0.1000, 0.0000, 0.0000, 0.1000, 1.000),        # (0.5000, 0.2500, 0.2500, 0.0000, 1),
-    "TAKE_PROFIT_PCT":                      (0.0100, 0.0000, 0.0000, 0.0010, 0.100),      # (0.0060, 0.0010, 0.0010, 0.0010, 0.1),
-    "BREAK_EVEN_STOP_PCT":                  (0.0005, 0.0000, 0.0000, 0.0000, 0.100),     # (0.0045, 0.0010, 0.0010, 0.0010, 0.01),
-    "BREAK_EVEN_BUFFER_PCT":                (0.0005, 0.0000, 0.0000, 0.0005, 0.001),    # (0.0002, 0.0000, 0.0000, 0.0000, 0.001),
-    }
+    # --- Indikator (fix lassen, solange Entry stabilisiert wird)
+    "EMA_FAST":                              (3,     0,     0,     3,    20),
+    "EMA_SLOW":                              (7,     0,     0,     5,    50),
+
+    # --- Entry / Struktur (variieren)
+    # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5,   1.5,   0.25,  0.2,   3.0),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.7,   1.2,   0.25,  0.3,   2.0),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2,   0.8,   0.10,  0.0,   2.0),
+    "REGIME_MIN_DIRECTIONALITY":             (0.05,  0.30,  0.05,  0.0,   0.60),
+
+    # --- Exit / Money-Management (fix lassen)
+    "STOP_LOSS_PCT":                         (0.0030, 0.0000, 0.0000, 0.0000, 0.010),
+    "TRAILING_STOP_PCT":                     (0.0050, 0.0000, 0.0000, 0.0000, 0.010),
+    "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
+    "TAKE_PROFIT_PCT":                       (0.0100, 0.0000, 0.0000, 0.0010, 0.100),
+    "BREAK_EVEN_STOP_PCT":                   (0.0005, 0.0000, 0.0000, 0.0000, 0.100),
+    "BREAK_EVEN_BUFFER_PCT":                 (0.0005, 0.0000, 0.0000, 0.0005, 0.001),
+}
+
+
+
 
 PARAM_ABBR = {
     "EMA_FAST": "E_FAST",
@@ -169,15 +196,14 @@ def int_range_centered(start: int, band: int, step: int) -> List[int]:
 
 
 def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str], List[Tuple[Any, ...]]]:
-    """
-    Unterstützt:
-      - 3-Tupel: (start, band, step)
-      - 5-Tupel: (start, band, step, min, max)
+    # Unterstützt:
+    #   - 3-Tupel: (start, band, step)
+    #   - 5-Tupel: (start, band, step, min, max)
 
-    Strategie 1 (Filter-only):
-      Werte werden erzeugt wie bisher um start±band und dann
-      außerhalb [min,max] verworfen (kein Clamping, keine Fenster-Verschiebung).
-    """
+    # Strategie 1 (Filter-only):
+    #   Werte werden erzeugt wie bisher um start±band und dann
+    #   außerhalb [min,max] verworfen (kein Clamping, keine Fenster-Verschiebung).
+
     keys = list(param_specs.keys())
     value_lists: List[List[Any]] = []
 
@@ -222,13 +248,14 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
                 return False
             # Mindestabstand entfernt (nur fast < slow)
 
-        # 3) Pullback: FAR muss strikt größer als NEAR sein (sonst ist das Armed→Return-Gate unlogisch)
-        if ("PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS" in d and
-            "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS" in d):
-            near_max = float(d["PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS"])
-            far_min  = float(d["PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS"])
-            if far_min <= near_max:
-                return False
+        # haut in ruhigen phasen nicht hin 13.01.2026
+        # # 3) Pullback: FAR muss strikt größer als NEAR sein (sonst ist das Armed→Return-Gate unlogisch)
+        # if ("PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS" in d and
+        #     "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS" in d):
+        #     near_max = float(d["PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS"])
+        #     far_min  = float(d["PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS"])
+        #     if far_min <= near_max:
+        #         return False
 
         return True
 

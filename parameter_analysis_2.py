@@ -94,13 +94,13 @@ PARAM_SPECS = {
 
     # --- Entry / Struktur (variieren)
     # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.7500, 0.2500, 0.2000, 3.0000),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.7000, 0.6000, 0.2000, 0.3000, 2.0000),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2000, 0.4000, 0.1000, 0.0000, 2.0000),
-    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.1500, 0.0500, 0.0000, 0.6000),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.5000, 0.2500, 0.2000, 3.0000),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.6000, 0.3000, 0.2000, 0.3000, 2.0000),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2000, 0.2000, 0.1000, 0.0000, 2.0000),
+    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.1000, 0.0500, 0.0000, 0.6000),
 
     # --- Exit / Money-Management (fix lassen)
-    "STOP_LOSS_PCT":                         (0.0030, 0.0005, 0.0005, 0.0000, 0.010),
+    "STOP_LOSS_PCT":                         (0.0020, 0.0000, 0.0000, 0.0000, 0.010),
     "TRAILING_STOP_PCT":                     (0.0050, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
     "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),

@@ -37,7 +37,7 @@ ENABLE_PROFILING = False   # für Laufzeit Tracking, bei Bedarf True
 
 # --- Parallelisierung ---
 ENABLE_PARALLEL = True
-MAX_WORKERS = max(2, min(12, (os.cpu_count() or 2) - 2)) # MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
+MAX_WORKERS = max(2, min(20, (os.cpu_count() or 2) - 2)) # MAX_WORKERS = min(12, (os.cpu_count() or 2) - 2)  # z.B. 12 auf deinem System
 MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 
 # --- Output/Speed ---
@@ -56,7 +56,7 @@ ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums j
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 900      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
@@ -89,22 +89,22 @@ USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.c
 # Autopilot: Entry-Parameter variieren, Exit-Parameter fix lassen
 PARAM_SPECS = {
     # --- Indikator (fix lassen, solange Entry stabilisiert wird)
-    "EMA_FAST":                              (3,     0,     0,     3,    20),
-    "EMA_SLOW":                              (7,     0,     0,     5,    50),
+    "EMA_FAST":                              (3, 0, 0, 3, 20),
+    "EMA_SLOW":                              (7, 0, 0, 5, 50),
 
     # --- Entry / Struktur (variieren)
     # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5,   1.5,   0.25,  0.2,   3.0),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.7,   1.2,   0.25,  0.3,   2.0),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2,   0.8,   0.10,  0.0,   2.0),
-    "REGIME_MIN_DIRECTIONALITY":             (0.05,  0.30,  0.05,  0.0,   0.60),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.7500, 0.2500, 0.2000, 3.0000),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.7000, 0.6000, 0.2000, 0.3000, 2.0000),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2000, 0.4000, 0.1000, 0.0000, 2.0000),
+    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.1500, 0.0500, 0.0000, 0.6000),
 
     # --- Exit / Money-Management (fix lassen)
-    "STOP_LOSS_PCT":                         (0.0030, 0.0000, 0.0000, 0.0000, 0.010),
-    "TRAILING_STOP_PCT":                     (0.0050, 0.0000, 0.0000, 0.0000, 0.010),
+    "STOP_LOSS_PCT":                         (0.0030, 0.0005, 0.0005, 0.0000, 0.010),
+    "TRAILING_STOP_PCT":                     (0.0050, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
-    "TAKE_PROFIT_PCT":                       (0.0100, 0.0000, 0.0000, 0.0010, 0.100),
-    "BREAK_EVEN_STOP_PCT":                   (0.0005, 0.0000, 0.0000, 0.0000, 0.100),
+    "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),
+    "BREAK_EVEN_STOP_PCT":                   (0.0005, 0.0002, 0.0002, 0.0000, 0.100),
     "BREAK_EVEN_BUFFER_PCT":                 (0.0005, 0.0000, 0.0000, 0.0005, 0.001),
 }
 

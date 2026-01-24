@@ -49,7 +49,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 200000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 150000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+SNAPSHOT_LAST_LINES = 20000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
 ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
@@ -231,6 +231,36 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
             # für ints/floats gleicher Vergleich (Python kann int/float vergleichen)
             vals = [v for v in vals if vmin <= v <= vmax]
 
+
+
+
+        # DEBUG: Prüfen, ob der Startwert überhaupt in der erzeugten Value-Liste enthalten ist
+        _start_raw = start
+        _start_f = None
+        try:
+            _start_f = float(start) if not isinstance(start, int) else int(start)
+        except Exception:
+            pass
+
+        _contains_start = False
+        if _start_f is not None:
+            # bei floats ist "in" manchmal wegen Rundung tricky -> deshalb auch "nahe dran" prüfen
+            _contains_start = (_start_f in vals)
+            _near = any(abs(float(v) - float(_start_f)) < 1e-9 for v in vals) if vals else False
+        else:
+            _near = False
+
+        print(f"🔎 DEBUG grid[{k}] spec={spec}")
+        print(f"    start={_start_raw} band={band} step={step} vmin={vmin} vmax={vmax}")
+        print(f"    vals_count={len(vals)} first={vals[:5]} last={vals[-5:]}")
+        print(f"    start_in_vals={_contains_start} start_near_vals={_near}")
+        if (not _contains_start) and _near:
+            print(f"    NOTE: start not exact in vals, but very close (float rounding)")
+
+
+
+
+
         if not vals:
             raise ValueError(f"PARAM_SPECS[{k}] erzeugt 0 Werte nach Filter (spec={spec}).")
 
@@ -266,6 +296,22 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
     removed = before - len(combos)
     if removed > 0:
         print(f"🧠 Kombinationssperre aktiv: {removed} Kombinationen verworfen (von {before} → {len(combos)})")
+
+
+    # DEBUG: Prüfen, ob die Startkombination (aus param_specs start-values) überhaupt in combos vorhanden ist
+    try:
+        _start_combo = tuple(param_specs[k][0] for k in keys)
+        _in_before = _start_combo in list(itertools.product(*value_lists))  # brutto (vor Sperre)
+        _in_after = _start_combo in combos  # nach Sperre
+        print("🔎 DEBUG start_combo in raw_product:", _in_before)
+        print("🔎 DEBUG start_combo in combos_after_filter:", _in_after)
+        if not _in_after:
+            print("🔎 DEBUG start_combo:", _start_combo)
+    except Exception as _e:
+        print("🔎 DEBUG start_combo check error:", repr(_e))
+
+
+
 
     return keys, combos
 
@@ -1251,9 +1297,32 @@ def main():
     else:
         effective_specs = PARAM_SPECS
 
+
+
+    # DEBUG: effective_specs Startwerte (nach apply_start_values_from_file)
+    print("🔎 DEBUG effective_specs start-values (k -> start):")
+    for _k in PARAM_SPECS.keys():
+        try:
+            print(f"  {_k} -> {effective_specs[_k][0]}")
+        except Exception as _e:
+            print(f"  {_k} -> <ERR> {repr(_e)}")
+
+
+
+
     # Startwerte (Grid-Zentrum) als Strings wie in results.csv
     global START_PARAMS_STR
     START_PARAMS_STR = {k: fmt_de(effective_specs[k][0]) for k in PARAM_SPECS.keys()}
+
+
+
+
+    # DEBUG: START_PARAMS_STR (so wie später in export_best_params_from_results verglichen wird)
+    print("🔎 DEBUG START_PARAMS_STR (k -> str):")
+    for _k in PARAM_SPECS.keys():
+        print(f"  {_k} -> '{START_PARAMS_STR.get(_k)}'")
+
+
 
     keys, combos = build_param_grid(effective_specs)
 

@@ -60,6 +60,8 @@ LOOP_SLEEP_SECONDS = 900      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
+# --- Quality Gate ---
+PF_MIN = 1.10  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
 
 
 # ============================================================
@@ -435,6 +437,15 @@ class BacktestBroker:
         self.opens = 0
         self.closes = 0
         self.last_price: Dict[str, Tuple[float, float, int]] = {}  # epic -> (bid, ask, ts)
+        # ------------------------------------------------------------
+        # Quality-Metriken (Trade-basiert) für Profit Factor / AvgWin/AvgLoss
+        # Diese Werte werden NUR im Backtest genutzt (bot_2), nicht im Live-Bot.
+        # ------------------------------------------------------------
+        self.sum_wins = 0.0          # Summe aller realisierten Gewinn-Trades (>= 0)
+        self.sum_losses_abs = 0.0    # Betrag der Summe aller realisierten Verlust-Trades (>= 0)
+        self.win_trades = 0          # Anzahl Gewinn-Trades
+        self.loss_trades = 0         # Anzahl Verlust-Trades
+
 
     def set_last_price(self, epic: str, bid: float, ask: float, ts_ms: int):
         self.last_price[epic] = (bid, ask, ts_ms)
@@ -479,6 +490,17 @@ class BacktestBroker:
         else:
             exit_price = ask
             pnl = (entry - exit_price) * size
+        
+                # ------------------------------------------------------------
+        # Quality-Metriken: Gewinn-/Verlust-Summen für Profit Factor
+        # ------------------------------------------------------------
+        if pnl > 0:
+            self.sum_wins += pnl
+            self.win_trades += 1
+        elif pnl < 0:
+            self.sum_losses_abs += abs(pnl)
+            self.loss_trades += 1
+        # pnl == 0 -> neutral, ignorieren wir für PF
 
         self.realized_pnl += pnl
         self.closes += 1
@@ -535,7 +557,7 @@ def run_single_backtest(
     instruments: List[str],
     params: Dict[str, Any],
     ticks_cache: Dict[str, List[Tuple[int, float, float, int]]]
-) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
 
     broker = BacktestBroker()
     reset_bot_state(instruments, broker)
@@ -651,6 +673,16 @@ def run_single_backtest(
 
     equity = broker.realized_pnl + unrealized
 
+    # ------------------------------------------------------------
+    # Profit Factor (PF) = SumWins / SumLossAbs
+    # - Wenn es keine Verlust-Trades gab (SumLossAbs == 0), setzen wir PF auf eine große Zahl.
+    # - Damit "perfekte" Sets nicht crashen (Division by Zero), aber später sauber gegated werden können.
+    # ------------------------------------------------------------
+    if broker.sum_losses_abs > 0:
+        profit_factor = broker.sum_wins / broker.sum_losses_abs
+    else:
+        profit_factor = 999999.0 if broker.sum_wins > 0 else 0.0
+
     return {
         "last_ts_ms": last_ts,
         "equity": equity,
@@ -659,6 +691,12 @@ def run_single_backtest(
         "opens": broker.opens,
         "closes": broker.closes,
         "open_positions_end": open_count,
+        # Quality-Metriken (Trade-basiert)
+        "sum_wins": broker.sum_wins,
+        "sum_losses_abs": broker.sum_losses_abs,
+        "win_trades": broker.win_trades,
+        "loss_trades": broker.loss_trades,
+        "profit_factor": profit_factor,
     }
 
 # ============================================================
@@ -755,6 +793,10 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     equity_idx = header.index("equity")
 
+    # --- Profit Factor Gate (wenn Spalte vorhanden) ---
+    pf_idx = header.index("profit_factor") if "profit_factor" in header else None
+
+
     closes_idx = header.index("closes") if "closes" in header else None
     best_closes = -1
 
@@ -766,6 +808,8 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     # Start-Equity aus results.csv bestimmen (Zeile finden, deren Parameter dem Startsatz entsprechen)
     start_equity = None
     if START_PARAMS_STR:
+
+        printed_start_mismatch = False
         
         for line in lines[1:]:
             if not line.strip():
@@ -778,8 +822,33 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
                     break
                 idx = header.index(k)
                 if idx >= len(cols) or cols[idx].strip() != s_val:
-                    ok = False
-                    break
+                    ok = False  # wichtig: bevor der Param-Loop verlassen wird
+
+                    # DEBUG: nur 1x ausgeben, sonst Spam
+                    if not printed_start_mismatch:
+                        printed_start_mismatch = True
+
+                        csv_val = cols[idx].strip() if idx < len(cols) else "<IDX_OOB>"
+                        try:
+                            f_csv = float(csv_val.replace(",", "."))
+                        except Exception:
+                            f_csv = None
+                        try:
+                            f_start = float(s_val.replace(",", "."))
+                        except Exception:
+                            f_start = None
+
+                        print("⚠️ STARTSATZ-MISMATCH (erste Abweichung)")
+                        print(f"  Param: {k}")
+                        print(f"  START (s_val): '{s_val}'")
+                        print(f"  CSV   (val)  : '{csv_val}'")
+                        print(f"  START float  : {f_start}")
+                        print(f"  CSV   float  : {f_csv}")
+                        if f_start is not None and f_csv is not None:
+                            print(f"  diff         : {f_csv - f_start}")
+
+                    break  # Param-Loop verlassen -> nächste results.csv-Zeile wird geprüft
+
             if ok:
                 eq_str = cols[equity_idx].strip()
                 if eq_str != "":
@@ -815,6 +884,21 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if closes_i < MIN_CLOSED_TRADES_FOR_EXPORT:
             continue
 
+        # --- PF_MIN Gate: nur Kandidaten mit ausreichender Trade-Qualität zulassen ---
+        if pf_idx is not None and pf_idx < len(cols):
+            pf_str = cols[pf_idx].strip()
+            if pf_str != "":
+                pf_val = float(pf_str.replace(",", "."))
+                if pf_val < PF_MIN:
+                    continue
+            else:
+                # leere PF-Spalte -> Kandidat verwerfen (stabiler als "durchwinken")
+                continue
+        else:
+            # profit_factor Spalte fehlt -> Gate kann nicht angewendet werden
+            # (hier bewusst NICHT continue, damit Abwärtskompatibilität erhalten bleibt)
+            pass
+
         # B) Improvement-Gate: nur Kandidaten besser als Startsatz zulassen
         if start_equity is not None and equity_val <= start_equity:
             continue
@@ -826,6 +910,12 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             best_equity = equity_val
             best_row = cols
             best_closes = closes_i
+
+    # Wenn PF-Gate aktiv ist und nichts übrig blieb: sauber abbrechen
+    if best_row is None and pf_idx is not None:
+        pf_min_str = f"{PF_MIN:.3f}".replace(".", ",")
+        print(f"ℹ️ Kein Parameter-Export: kein Kandidat erfüllt PF_MIN={pf_min_str} bei gleichzeitig MIN_CLOSED_TRADES_FOR_EXPORT={MIN_CLOSED_TRADES_FOR_EXPORT}.")
+        return
 
     # B) Wenn Improvement-Gate aktiv war, aber keine Verbesserung gefunden wurde: kein Export
     if start_equity is not None and (best_row is None or best_equity is None):
@@ -909,7 +999,12 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     # History-Header bei Bedarf schreiben
     if not history_file.exists():
-        hist_header = ["timestamp", "range_start", "range_end", "range_duration", "equity", "closes"] + list(PARAM_SPECS.keys())
+        hist_header = [
+            "timestamp", "range_start", "range_end", "range_duration",
+            "equity", "closes",
+            "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades"
+        ] + list(PARAM_SPECS.keys())
+
         with open(history_file, "w", encoding="utf-8", newline="") as hf:
             hf.write(";".join(hist_header) + "\n")
 
@@ -920,6 +1015,13 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         range_start = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
         range_end   = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
 
+    def _best_row_val(col_name: str) -> str:
+        if col_name in header:
+            j = header.index(col_name)
+            if j < len(best_row):
+                return best_row[j].strip()
+        return ""
+
     hist_vals = [
         ts_local,
         range_start,
@@ -927,6 +1029,11 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         dur_hms,
         f"{best_equity:.6f}".replace(".", ","),
         closes_val,
+        _best_row_val("sum_wins"),
+        _best_row_val("sum_losses_abs"),
+        _best_row_val("profit_factor"),
+        _best_row_val("win_trades"),
+        _best_row_val("loss_trades"),
     ] + [dict(params_out).get(k, "") for k in PARAM_SPECS.keys()]
 
     with open(history_file, "a", encoding="utf-8", newline="") as hf:
@@ -1068,7 +1175,9 @@ def main():
     header_cols = [
         "run_time", "run", "total",
         "equity", "realized", "unrealized",
-        "opens", "closes", "open_end"
+        "opens", "closes", "open_end",
+        # Quality-Metriken (Trade-basiert)
+        "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades"
     ] + list(PARAM_SPECS.keys())
 
     with open(RESULTS_CSV_FILE, "w", encoding="utf-8", newline="") as f_csv:
@@ -1176,7 +1285,10 @@ def main():
                             best_run_seen = next_to_write
 
                             best_de = f"{eq:.2f}".replace(".", ",")
-                            print(f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} | {_param_str(p)}")
+                            print(
+                                f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} "
+                                f"| PF={metrics.get('profit_factor', 0.0):.3f} | {_param_str(p)}"
+                            )
 
                         csv_vals = [
                             run_time_str,
@@ -1188,7 +1300,14 @@ def main():
                             str(m["opens"]),
                             str(m["closes"]),
                             str(m["open_positions_end"]),
+                            # Quality-Metriken (Trade-basiert)
+                            fmt_de(m.get("sum_wins", 0.0)),
+                            fmt_de(m.get("sum_losses_abs", 0.0)),
+                            fmt_de(m.get("profit_factor", 0.0)),
+                            str(m.get("win_trades", 0)),
+                            str(m.get("loss_trades", 0)),
                         ] + [fmt_de(p[k]) for k in PARAM_SPECS.keys()]
+
                         f_csv.write(";".join(csv_vals) + "\n")
 
                         next_to_write += 1
@@ -1237,7 +1356,14 @@ def main():
                 str(metrics["opens"]),
                 str(metrics["closes"]),
                 str(metrics["open_positions_end"]),
+                # Quality-Metriken (Trade-basiert)
+                fmt_de(metrics.get("sum_wins", 0.0)),
+                fmt_de(metrics.get("sum_losses_abs", 0.0)),
+                fmt_de(metrics.get("profit_factor", 0.0)),
+                str(metrics.get("win_trades", 0)),
+                str(metrics.get("loss_trades", 0)),
             ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
+
             f_csv.write(";".join(csv_vals) + "\n")
 
     # --- Nach dem vollständigen Durchlauf: besten Parametersatz exportieren ---

@@ -56,7 +56,7 @@ ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums j
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
-LOOP_SLEEP_SECONDS = 900      # Wartezeit zwischen Läufen (Sekunden)
+LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
 MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS

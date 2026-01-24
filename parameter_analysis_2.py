@@ -1260,12 +1260,12 @@ def main():
                         _, m, p = pending.pop(next_to_write)
 
                         run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-                        saldo_str = f"{m['equity']:.2f}".replace(".", ",")
+                        balance_str = f"{m['equity']:.2f}".replace(".", ",")
 
                         # ✅ Quick Win: Console-Output stark reduzieren
                         if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
                             print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
-                                f"Saldo={saldo_str} | closed Trades={m['closes']} | {_param_str(p)}")
+                                f"Balance={balance_str} | closes={m['closes']} | {_param_str(p)}")
 
                         # ✅ NEW BEST Tracking (Equity besser oder bei gleicher Equity mehr closes)
                         eq = round(float(m["equity"]), 2)
@@ -1343,8 +1343,8 @@ def main():
             param_str = " ".join(parts)
 
             run_time_str = datetime.now(bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
-            saldo_str = f"{metrics['equity']:.2f}".replace(".", ",")
-            print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Saldo={saldo_str} | Trades={metrics['closes']} | {param_str}")
+            balance_str = f"{metrics['equity']:.2f}".replace(".", ",")
+            print(f"{run_time_str} | Durchlauf {i}/{max_runs} | Balance={balance_str} | Trades={metrics['closes']} | {param_str}")
 
             csv_vals = [
                 run_time_str,

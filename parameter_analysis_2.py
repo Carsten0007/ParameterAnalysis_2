@@ -777,6 +777,20 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         print(f"⚠️ Keine Results-Datei gefunden: {results_csv}")
         return
 
+
+
+    # DEBUG: Welche results.csv wird wirklich gelesen (Pfad, resolve, Existenz, Dateigröße)
+    try:
+        print("🔎 DEBUG results_csv:", str(results_csv))
+        print("🔎 DEBUG results_csv.resolve():", str(results_csv.resolve()))
+        print("🔎 DEBUG results_csv.exists():", results_csv.exists())
+        print("🔎 DEBUG results_csv.size_bytes:", results_csv.stat().st_size)
+    except Exception as e:
+        print("🔎 DEBUG results_csv error:", repr(e))
+
+
+
+
     # --- analysierter Zeitraum (aus Snapshot-Ticks) ---
     t0_ms, t1_ms, dur_hms = get_snapshot_time_range(INSTRUMENTS, TICKS_DIR)
 
@@ -787,6 +801,24 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         return
 
     header = lines[0].split(";")
+
+
+
+    # DEBUG: Header + Startsatz-Keys prüfen (fehlen Keys aus START_PARAMS_STR im results.csv-Header?)
+    print("🔎 DEBUG header_cols_count:", len(header))
+    print("🔎 DEBUG header_first_cols:", header[:25])
+
+    if START_PARAMS_STR:
+        _skeys = list(START_PARAMS_STR.keys())
+        print("🔎 DEBUG START_PARAMS_STR key_count:", len(_skeys))
+        print("🔎 DEBUG START_PARAMS_STR keys:", _skeys)
+        _missing = [k for k in _skeys if k not in header]
+        print("🔎 DEBUG START_PARAMS_STR missing_in_header:", _missing)
+    else:
+        print("🔎 DEBUG START_PARAMS_STR is empty/None")
+
+
+
     if "equity" not in header:
         print(f"⚠️ Spalte 'equity' nicht gefunden in: {results_csv}")
         return
@@ -809,17 +841,41 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     start_equity = None
     if START_PARAMS_STR:
 
+
+
+        # DEBUG: Statistik zur Startsatz-Suche (wie viele Zeilen geprüft / gab es überhaupt einen Match?)
+        _dbg_checked = 0
+        _dbg_exact_matches = 0
+        _dbg_best_mismatch_count = 10**9
+        _dbg_best_mismatch_preview = None
+        _dbg_header_set = set(header)
+
+
+
         printed_start_mismatch = False
         
         for line in lines[1:]:
             if not line.strip():
                 continue
             cols = line.split(";")
+
+
+
+            # DEBUG: Zeilenzähler
+            _dbg_checked += 1
+            _dbg_mismatch_count = 0
+
+
+
+
             ok = True
             for k, s_val in START_PARAMS_STR.items():
                 if k not in header:
+                    # DEBUG: Key fehlt im Header -> Match unmöglich
+                    _dbg_mismatch_count += 1
                     ok = False
                     break
+
                 idx = header.index(k)
                 if idx >= len(cols) or cols[idx].strip() != s_val:
                     ok = False  # wichtig: bevor der Param-Loop verlassen wird
@@ -847,14 +903,46 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
                         if f_start is not None and f_csv is not None:
                             print(f"  diff         : {f_csv - f_start}")
 
+
+                    # DEBUG: Mismatch-Zähler (für "fast passende" Zeilen)
+                    _dbg_mismatch_count += 1
+                    
+
                     break  # Param-Loop verlassen -> nächste results.csv-Zeile wird geprüft
+
+
+            # DEBUG: Beste (niedrigste) Mismatch-Anzahl merken, um Format-/Einzelspaltenfehler zu erkennen
+            if not ok:
+                if _dbg_mismatch_count < _dbg_best_mismatch_count:
+                    _dbg_best_mismatch_count = _dbg_mismatch_count
+                    _dbg_best_mismatch_preview = line[:220]
+
+
 
             if ok:
                 eq_str = cols[equity_idx].strip()
                 if eq_str != "":
+
+
+                    # DEBUG: Exakte Matches zählen
+                    _dbg_exact_matches += 1
+
+                    
                     start_equity = float(eq_str.replace(",", "."))
                 break
     
+
+
+        # DEBUG: Ergebnis der Startsatz-Suche zusammenfassen
+        print("🔎 DEBUG start_match checked_lines:", _dbg_checked)
+        print("🔎 DEBUG start_match exact_matches:", _dbg_exact_matches)
+        print("🔎 DEBUG start_match best_mismatch_count:", _dbg_best_mismatch_count)
+        if _dbg_best_mismatch_preview is not None:
+            print("🔎 DEBUG start_match best_mismatch_preview:", _dbg_best_mismatch_preview)
+
+
+
+
     if START_PARAMS_STR and start_equity is None:
         print("⚠️ Startsatz in results.csv nicht gefunden -> Improvement-Gate deaktiviert (nur für diesen Lauf).")
 

@@ -49,7 +49,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 200000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 20000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+SNAPSHOT_LAST_LINES = 160000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
 ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
@@ -96,13 +96,13 @@ PARAM_SPECS = {
 
     # --- Entry / Struktur (variieren)
     # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.5000, 0.2500, 0.2000, 3.0000),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.6000, 0.3000, 0.2000, 0.3000, 2.0000),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.2000, 0.1000, 0.2000, 3.0000),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.6000, 0.2000, 0.1000, 0.3000, 2.0000),
     "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2000, 0.2000, 0.1000, 0.0000, 2.0000),
     "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.1000, 0.0500, 0.0000, 0.6000),
 
     # --- Exit / Money-Management (fix lassen)
-    "STOP_LOSS_PCT":                         (0.0020, 0.0000, 0.0000, 0.0000, 0.010),
+    "STOP_LOSS_PCT":                         (0.0020, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_STOP_PCT":                     (0.0050, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
     "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),
@@ -985,8 +985,8 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         print("🔎 DEBUG start_match best_mismatch_count:", _dbg_best_mismatch_count)
         if _dbg_best_mismatch_preview is not None:
             print("🔎 DEBUG start_match best_mismatch_preview:", _dbg_best_mismatch_preview)
-
-
+        # DEBUG: Start-Equity aus der gefundenen Startsatz-Zeile (für Improvement-Gate)
+        print("🔎 DEBUG start_equity:", (f"{start_equity:.6f}".replace(".", ",") if start_equity is not None else "<None>"))
 
 
     if START_PARAMS_STR and start_equity is None:

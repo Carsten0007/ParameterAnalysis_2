@@ -940,7 +940,7 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
                         except Exception:
                             f_start = None
 
-                        print("⚠️ STARTSATZ-MISMATCH (erste Abweichung)")
+                        print("ℹ️ STARTSATZ: erste nicht-passende Zeile im results.csv (nur Debug-Info)")
                         print(f"  Param: {k}")
                         print(f"  START (s_val): '{s_val}'")
                         print(f"  CSV   (val)  : '{csv_val}'")

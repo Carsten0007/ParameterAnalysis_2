@@ -5,7 +5,7 @@ import io
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple, Any, Iterable, Optional
 import heapq
 import cProfile
@@ -96,17 +96,17 @@ PARAM_SPECS = {
 
     # --- Entry / Struktur (variieren)
     # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.5000, 0.2000, 0.1000, 0.2000, 3.0000),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.6000, 0.2000, 0.1000, 0.3000, 2.0000),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.2000, 0.2000, 0.1000, 0.0000, 2.0000),
-    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.1000, 0.0500, 0.0000, 0.6000),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.0000, 0.2000, 0.1000, 1.0000, 3.0000),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.5000, 0.2000, 0.1000, 1.5000, 5.0000),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.4500, 0.2000, 0.1000, 0.3000, 1.2000),
+    "REGIME_MIN_DIRECTIONALITY":             (0.2500, 0.1000, 0.0500, 0.1500, 0.5000),
 
     # --- Exit / Money-Management (fix lassen)
-    "STOP_LOSS_PCT":                         (0.0020, 0.0005, 0.0005, 0.0000, 0.010),
-    "TRAILING_STOP_PCT":                     (0.0050, 0.0005, 0.0005, 0.0000, 0.010),
+    "STOP_LOSS_PCT":                         (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
+    "TRAILING_STOP_PCT":                     (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
-    "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),
-    "BREAK_EVEN_STOP_PCT":                   (0.0005, 0.0002, 0.0002, 0.0000, 0.100),
+    "TAKE_PROFIT_PCT":                       (0.0055, 0.0005, 0.0005, 0.0010, 0.100),
+    "BREAK_EVEN_STOP_PCT":                   (0.0039, 0.0002, 0.0002, 0.0000, 0.100),
     "BREAK_EVEN_BUFFER_PCT":                 (0.0005, 0.0000, 0.0000, 0.0005, 0.001),
 }
 
@@ -1123,7 +1123,8 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             f.write(f"{k};{v_bot}\n")
 
         # --- fest ergänzte Parameter (für Bot erforderlich) ---
-        f.write("USE_HMA;True\n")
+        # mist
+        f.write("USE_HMA;False\n")
         f.write("TRADE_RISK_PCT;0.0025\n")
         f.write("MANUAL_TRADE_SIZE;0.3\n")
 
@@ -1567,7 +1568,11 @@ if __name__ == "__main__":
                 break
 
             if LOOP_SLEEP_SECONDS > 0:
-                print(f"--- Warte {LOOP_SLEEP_SECONDS} Sekunden bis zum nächsten Lauf ---")
+                next_run = datetime.now().astimezone() + timedelta(seconds=LOOP_SLEEP_SECONDS)
+                print(
+                    f"--- Warte {LOOP_SLEEP_SECONDS} Sekunden bis zum nächsten Lauf "
+                    f"um {next_run.strftime('%H:%M:%S')} ---"
+                )
                 time.sleep(LOOP_SLEEP_SECONDS)
 
     except KeyboardInterrupt:

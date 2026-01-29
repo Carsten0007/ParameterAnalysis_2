@@ -250,15 +250,15 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
         else:
             _near = False
 
-        print(f"🔎 DEBUG grid[{k}] spec={spec}")
-        print(f"    start={_start_raw} band={band} step={step} vmin={vmin} vmax={vmax}")
-        print(f"    vals_count={len(vals)} first={vals[:5]} last={vals[-5:]}")
-        print(f"    start_in_vals={_contains_start} start_near_vals={_near}")
+        print(
+            f"🔎 DEBUG grid[{k}] spec={spec} | "
+            f"start={_start_raw} band={band} step={step} vmin={vmin} vmax={vmax} | "
+            f"vals_count={len(vals)} first={vals[:5]} last={vals[-5:]} | "
+            f"start_in_vals={_contains_start} start_near_vals={_near}"
+        )
+
         if (not _contains_start) and _near:
             print(f"    NOTE: start not exact in vals, but very close (float rounding)")
-
-
-
 
 
         if not vals:

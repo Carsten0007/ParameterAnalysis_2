@@ -48,8 +48,8 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
-DEFAULT_SNAPSHOT_LAST_LINES = 200000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 160000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+DEFAULT_SNAPSHOT_LAST_LINES = 300000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
+SNAPSHOT_LAST_LINES = 200000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
 ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
@@ -57,11 +57,11 @@ ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums j
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
-MIN_CLOSED_TRADES_FOR_EXPORT = 3   # z.B. 10/20/30 – Start: 20
+MIN_CLOSED_TRADES_FOR_EXPORT = 2   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
 # --- Quality Gate ---
-PF_MIN = 1.10  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
+PF_MIN = 0.85  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
 
 
 # ============================================================
@@ -96,18 +96,18 @@ PARAM_SPECS = {
 
     # --- Entry / Struktur (variieren)
     # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.0000, 0.2000, 0.1000, 1.0000, 3.0000),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (1.5000, 0.2000, 0.1000, 1.5000, 5.0000),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.4500, 0.2000, 0.1000, 0.3000, 1.2000),
-    "REGIME_MIN_DIRECTIONALITY":             (0.2500, 0.1000, 0.0500, 0.1500, 0.5000),
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (0.7500, 0.4000, 0.2000, 0.1000, 3.0000),
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (0.5000, 0.4000, 0.2000, 0.1000, 5.0000),
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.7000, 0.4000, 0.2000, 0.3000, 1.2000),
+    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.0500, 0.0500, 0.0000, 0.5000),
 
     # --- Exit / Money-Management (fix lassen)
     "STOP_LOSS_PCT":                         (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_STOP_PCT":                     (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
     "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
-    "TAKE_PROFIT_PCT":                       (0.0055, 0.0005, 0.0005, 0.0010, 0.100),
-    "BREAK_EVEN_STOP_PCT":                   (0.0039, 0.0002, 0.0002, 0.0000, 0.100),
-    "BREAK_EVEN_BUFFER_PCT":                 (0.0005, 0.0000, 0.0000, 0.0005, 0.001),
+    "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),
+    "BREAK_EVEN_STOP_PCT":                   (0.0015, 0.0000, 0.0005, 0.0000, 0.100),
+    "BREAK_EVEN_BUFFER_PCT":                 (0.0025, 0.0000, 0.0000, 0.0005, 0.005),
 }
 
 
@@ -1116,17 +1116,51 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         return
 
     # parameter.csv schreiben (überschreiben)
+
+    # --- Passthrough: alle Parameter aus bestehender parameter.csv übernehmen,
+    #     die NICHT in PARAM_SPECS sind ---
+    passthrough = {}
+    if out_parameter_csv.exists():
+        try:
+            for line in out_parameter_csv.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or ";" not in line:
+                    continue
+                k0, v0 = line.split(";", 1)
+                k0 = k0.strip()
+                v0 = v0.strip()
+                if k0 and k0 not in PARAM_SPECS:
+                    passthrough[k0] = v0
+        except Exception as e:
+            print(f"⚠️ Passthrough-Read parameter.csv fehlgeschlagen: {e}")
+
     with open(out_parameter_csv, "w", encoding="utf-8", newline="") as f:
+
+        # 1) Optimizer-Parameter schreiben
         for k, v in params_out:
             # Bot erwartet Dezimalpunkt
             v_bot = v.replace(",", ".")
             f.write(f"{k};{v_bot}\n")
 
-        # --- fest ergänzte Parameter (für Bot erforderlich) ---
-        # mist
-        f.write("USE_HMA;False\n")
-        f.write("TRADE_RISK_PCT;0.0025\n")
-        f.write("MANUAL_TRADE_SIZE;0.3\n")
+        # 2) AB HIER: wieder auf WITH-Ebene (nicht mehr im FOR!)
+        written = {k for k, _ in params_out}
+
+        # 2a) Passthrough-Keys 1:1 übernehmen
+        for k0, v0 in passthrough.items():
+            if k0 not in written:
+                f.write(f"{k0};{v0}\n")
+                written.add(k0)
+
+        # 2b) Sicherstellen: diese Keys müssen existieren (Defaults nur wenn fehlend)
+        defaults = {
+            "USE_HMA": "True",
+            "TRADE_RISK_PCT": "0.0025",
+            "MANUAL_TRADE_SIZE": "0.3",
+        }
+        for k0, v0 in defaults.items():
+            if k0 not in written:
+                f.write(f"{k0};{v0}\n")
+                written.add(k0)
+
 
     # --- Verlauf protokollieren (bestes Ergebnis je Lauf) ---
     history_file = RESULTS_DIR / "result_history.csv"
@@ -1369,6 +1403,7 @@ def main():
             best_equity_seen = None
             best_closes_seen = None
             best_run_seen = None
+            best_params_seen = None
 
             combo_iter = iter(enumerate(combos, 1))
 
@@ -1423,7 +1458,7 @@ def main():
                         # ✅ Quick Win: Console-Output stark reduzieren
                         if next_to_write % 100 == 0 or next_to_write == 1 or next_to_write == max_runs:
                             print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
-                                f"Balance={balance_str} | closes={m['closes']} | {_param_str(p)}")
+                                f"Balance={balance_str} | closes={m['closes']} | {_param_str(best_params_seen or p)}")
 
                         # ✅ NEW BEST Tracking (Equity besser oder bei gleicher Equity mehr closes)
                         eq = round(float(m["equity"]), 2)
@@ -1441,6 +1476,7 @@ def main():
                             best_equity_seen = eq
                             best_closes_seen = cl
                             best_run_seen = next_to_write
+                            best_params_seen = p
 
                             best_de = f"{eq:.2f}".replace(".", ",")
                             print(

@@ -49,19 +49,19 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 300000 # << anpassen: wie viele letzte Zeilen übernehmen? | Default bei neustart
-SNAPSHOT_LAST_LINES = 200000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
-ESTIMATED_PERIOD_MINUTES = 600  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
+SNAPSHOT_LAST_LINES = 180000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+ESTIMATED_PERIOD_MINUTES = 360  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
 # LOOP-BETRIEB (kontinuierlicher Batch)
 # ============================================================
 LOOP_ENABLED = True          # True = Dauerbetrieb, False = nur ein Durchlauf
 LOOP_SLEEP_SECONDS = 1800      # Wartezeit zwischen Läufen (Sekunden)
-MIN_CLOSED_TRADES_FOR_EXPORT = 2   # z.B. 10/20/30 – Start: 20
+MIN_CLOSED_TRADES_FOR_EXPORT = 5   # z.B. 10/20/30 – Start: 20
 START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich equity_neu besser equity_aktuell
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
 # --- Quality Gate ---
-PF_MIN = 0.85  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
+PF_MIN = 0.90  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
 
 
 # ============================================================
@@ -87,27 +87,23 @@ PF_MIN = 0.85  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10
 #     }
 # comment 16.01.2026 00:11
 
-
-# Autopilot: Entry-Parameter variieren, Exit-Parameter fix lassen
 PARAM_SPECS = {
-    # --- Indikator (fix lassen, solange Entry stabilisiert wird)
-    "EMA_FAST":                              (3, 0, 0, 3, 20),
-    "EMA_SLOW":                              (7, 0, 0, 5, 50),
+    "EMA_FAST": (3, 0, 0, 3, 20),  # Periodenlänge der schnellen EMA (reagiert schnell auf Kursänderungen, Signalbasis)
+    "EMA_SLOW": (7, 0, 0, 5, 50),  # Periodenlänge der langsamen EMA (Trend-/Filterbasis, glättet stärker als EMA_FAST)
 
-    # --- Entry / Struktur (variieren)
-    # ETHUSD-freundliche, sinnvolle Bereiche (Spread-skalierte Distanzen!)
-    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (0.7500, 0.4000, 0.2000, 0.1000, 3.0000),
-    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (0.5000, 0.4000, 0.2000, 0.1000, 5.0000),
-    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (0.7000, 0.4000, 0.2000, 0.3000, 1.2000),
-    "REGIME_MIN_DIRECTIONALITY":             (0.0500, 0.0500, 0.0500, 0.0000, 0.5000),
+    # --- Entry / Struktur (Hauptlernraum)
+    "PULLBACK_NEAR_MA_MAX_DISTANCE_SPREADS": (1.7000, 0.6000, 0.2000, 0.3000, 2.1000),  # Max. Abstand (in Spreads) zum MA für "nahen" Pullback: höher = mehr Trades, niedriger = selektiver
+    "PULLBACK_FAR_MA_MIN_DISTANCE_SPREADS":  (0.8000, 0.6000, 0.2000, 0.3000, 2.4000),  # Min. Abstand (in Spreads) zum MA für "weiten" Pullback: höher = nur stärkere Rücksetzer, niedriger = häufiger/trendnäher
+    "CONFIRM_MIN_CLOSE_DELTA_SPREADS":       (1.4000, 0.6000, 0.2000, 0.4000, 1.6000),  # Mindestbewegung (Close-zu-Close) in Spreads als Bestätigung: höher = weniger, dafür "kräftigere" Signale
+    "REGIME_MIN_DIRECTIONALITY":             (0.2500, 0.2000, 0.0500, 0.0000, 0.3000),  # Mindest-"Gerichtetheit"/Trendstärke für Trades: höher = filtert Chop/Seitwärts stärker, niedriger = mehr Trades in jedem Regime
 
-    # --- Exit / Money-Management (fix lassen)
-    "STOP_LOSS_PCT":                         (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
-    "TRAILING_STOP_PCT":                     (0.0035, 0.0005, 0.0005, 0.0000, 0.010),
-    "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 1.000),
-    "TAKE_PROFIT_PCT":                       (0.0100, 0.0005, 0.0005, 0.0010, 0.100),
-    "BREAK_EVEN_STOP_PCT":                   (0.0015, 0.0000, 0.0005, 0.0000, 0.100),
-    "BREAK_EVEN_BUFFER_PCT":                 (0.0025, 0.0000, 0.0000, 0.0005, 0.005),
+    # --- Exit / Money-Management
+    "STOP_LOSS_PCT":                         (0.0020, 0.0010, 0.0005, 0.0010, 0.0060),  # Fester Stop-Loss in % vom Entry: höher = mehr Luft (weniger Stopouts), niedriger = enger (mehr Stopouts, kleinerer Verlust)
+    "TRAILING_STOP_PCT":                     (0.0020, 0.0010, 0.0005, 0.0010, 0.0060),  # Trailing-Stop Abstand in %: höher = lässt Gewinne laufen (aber gibt mehr ab), niedriger = nimmt schneller mit (aber öfter raus)
+    "TRAILING_SET_CALM_DOWN":                (0.1000, 0.0000, 0.0000, 0.1000, 0.1000),  # Mindestzeit/Abkühlphase bis Trailing aktiviert/verschärft wird: höher = späteres Nachziehen, niedriger = früher/aggressiver
+    "TAKE_PROFIT_PCT":                       (0.0100, 0.0000, 0.0000, 0.0100, 0.0100),  # Fixes Take-Profit in %: höher = größere Gewinner, aber seltener erreicht; niedriger = schneller kleine Gewinne
+    "BREAK_EVEN_STOP_PCT":                   (0.0005, 0.0000, 0.0000, 0.0000, 0.0050),  # Ab welchem Gewinn (%) der SL auf Break-Even gesetzt wird: niedriger = früher absichern, höher = später absichern
+    "BREAK_EVEN_BUFFER_PCT":                 (0.0015, 0.0000, 0.0000, 0.0000, 0.0050),  # Sicherheitsabstand (%) beim Break-Even-SL über/unter Entry: höher = mehr Puffer gegen Rauschen, niedriger = enger/öfter raus
 }
 
 

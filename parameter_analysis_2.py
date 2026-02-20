@@ -875,11 +875,21 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     any_nonzero_equity = False
 
+    # --- Fallback-Tracker (Phase 1): entblockt Export ohne neue Parameter ---
+    # 1) "best_row" bleibt der STRIKTE Gewinner: closes>=MIN und pf>=PF (wenn vorhanden) und improvement (falls aktiv)
+    # 2) best_row_relaxed_pf: closes>=MIN, aber PF-Gate wird ignoriert (falls PF alle rausfiltert)
+    # 3) best_row_any: closes>=1, egal ob MIN erreicht; PF wird ignoriert (letzte Rettung gegen "kein Export")
+    best_equity_relaxed_pf = None
+    best_row_relaxed_pf = None
+    best_closes_relaxed_pf = -1
+
+    best_equity_any = None
+    best_row_any = None
+    best_closes_any = -1
+
     # Start-Equity aus results.csv bestimmen (Zeile finden, deren Parameter dem Startsatz entsprechen)
     start_equity = None
     if START_PARAMS_STR:
-
-
 
         # DEBUG: Statistik zur Startsatz-Suche (wie viele Zeilen geprüft / gab es überhaupt einen Match?)
         _dbg_checked = 0
@@ -888,8 +898,6 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         _dbg_best_mismatch_preview = None
         _dbg_header_set = set(header)
 
-
-
         printed_start_mismatch = False
         
         for line in lines[1:]:
@@ -897,14 +905,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
                 continue
             cols = line.split(";")
 
-
-
             # DEBUG: Zeilenzähler
             _dbg_checked += 1
             _dbg_mismatch_count = 0
-
-
-
 
             ok = True
             for k, s_val in START_PARAMS_STR.items():
@@ -1001,50 +1004,90 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if equity_val != 0.0:
             any_nonzero_equity = True
 
-        # B) Mindestanzahl closes vorab filtern (damit gleiche equities nicht am Ende scheitern)
+        # B) closes lesen (falls vorhanden)
         closes_i = 0
         if closes_idx is not None and closes_idx < len(cols):
             v = cols[closes_idx].strip()
             closes_i = int(v) if v.isdigit() else 0
 
-        if closes_i < MIN_CLOSED_TRADES_FOR_EXPORT:
-            continue
+        # --- PF lesen (falls vorhanden) ---
+        pf_ok = True
+        pf_val = None
+        pf_missing_or_empty = False
 
-        # --- PF_MIN Gate: nur Kandidaten mit ausreichender Trade-Qualität zulassen ---
         if pf_idx is not None and pf_idx < len(cols):
             pf_str = cols[pf_idx].strip()
-            if pf_str != "":
+            if pf_str == "":
+                pf_ok = False
+                pf_missing_or_empty = True
+            else:
                 pf_val = float(pf_str.replace(",", "."))
                 if pf_val < PF_MIN:
-                    continue
-            else:
-                # leere PF-Spalte -> Kandidat verwerfen (stabiler als "durchwinken")
-                continue
+                    pf_ok = False
         else:
-            # profit_factor Spalte fehlt -> Gate kann nicht angewendet werden
-            # (hier bewusst NICHT continue, damit Abwärtskompatibilität erhalten bleibt)
-            pass
+            # profit_factor Spalte fehlt -> PF-Gate nicht anwendbar
+            pf_missing_or_empty = True
+            pf_ok = True
 
-        # B) Improvement-Gate: nur Kandidaten besser als Startsatz zulassen
+        # --- Improvement-Gate: nur Kandidaten besser als Startsatz zulassen ---
         if start_equity is not None and equity_val <= start_equity:
             continue
-        
-        # Max suchen; bei Gleichstand gewinnt die Zeile mit mehr closes
-        if (best_equity is None
-            or equity_val > best_equity
-            or (equity_val == best_equity and closes_i > best_closes)):
-            best_equity = equity_val
-            best_row = cols
-            best_closes = closes_i
 
-    # Wenn PF-Gate aktiv ist und nichts übrig blieb: sauber abbrechen
-    if best_row is None and pf_idx is not None:
+        # --- Bucket 3 (letzte Rettung): closes>=1, PF egal ---
+        if closes_i >= 1:
+            if (best_equity_any is None
+                or equity_val > best_equity_any
+                or (equity_val == best_equity_any and closes_i > best_closes_any)):
+                best_equity_any = equity_val
+                best_row_any = cols
+                best_closes_any = closes_i
+
+        # --- Bucket 2: closes>=MIN, PF egal (wenn PF-Gate alles wegfiltert) ---
+        if closes_i >= MIN_CLOSED_TRADES_FOR_EXPORT:
+            if (best_equity_relaxed_pf is None
+                or equity_val > best_equity_relaxed_pf
+                or (equity_val == best_equity_relaxed_pf and closes_i > best_closes_relaxed_pf)):
+                best_equity_relaxed_pf = equity_val
+                best_row_relaxed_pf = cols
+                best_closes_relaxed_pf = closes_i
+
+        # --- Bucket 1 (STRIKT): closes>=MIN und PF>=PF_MIN (wenn PF vorhanden) ---
+        # Wenn pf_idx existiert, verlangen wir pf_ok==True (also nicht leer und nicht < PF_MIN).
+        # Wenn pf_idx fehlt, bleibt pf_ok True (Abwärtskompatibilität).
+        if closes_i >= MIN_CLOSED_TRADES_FOR_EXPORT and pf_ok:
+            # Max suchen; bei Gleichstand gewinnt die Zeile mit mehr closes
+            if (best_equity is None
+                or equity_val > best_equity
+                or (equity_val == best_equity and closes_i > best_closes)):
+                best_equity = equity_val
+                best_row = cols
+                best_closes = closes_i
+
+    # --- Phase 1: Fallback-Auswahl, damit Export nicht blockiert ---
+    chosen_row = best_row
+    chosen_equity = best_equity
+    fallback_reason = None
+
+    if chosen_row is None:
+        if best_row_relaxed_pf is not None:
+            chosen_row = best_row_relaxed_pf
+            chosen_equity = best_equity_relaxed_pf
+            fallback_reason = "Fallback: PF-Gate hat alle Kandidaten rausgefiltert (closes>=MIN erfüllt)."
+        elif best_row_any is not None:
+            chosen_row = best_row_any
+            chosen_equity = best_equity_any
+            fallback_reason = "Fallback: closes>=MIN nicht erreicht (closes>=1), Export entblockt."
+        else:
+            chosen_row = None
+
+    # Wenn trotz Fallback nichts da ist: abbrechen wie bisher
+    if chosen_row is None:
         pf_min_str = f"{PF_MIN:.3f}".replace(".", ",")
-        print(f"ℹ️ Kein Parameter-Export: kein Kandidat erfüllt PF_MIN={pf_min_str} bei gleichzeitig MIN_CLOSED_TRADES_FOR_EXPORT={MIN_CLOSED_TRADES_FOR_EXPORT}.")
+        print(f"ℹ️ Kein Parameter-Export: keine gültigen Kandidaten (PF_MIN={pf_min_str}, MIN_CLOSED_TRADES_FOR_EXPORT={MIN_CLOSED_TRADES_FOR_EXPORT}).")
         return
 
     # B) Wenn Improvement-Gate aktiv war, aber keine Verbesserung gefunden wurde: kein Export
-    if start_equity is not None and (best_row is None or best_equity is None):
+    if start_equity is not None and (chosen_row is None or chosen_equity is None):
         start_de = f"{start_equity:.6f}".replace(".", ",")
 
         # Startsatz kompakt ausgeben (weiterverwenden)
@@ -1077,21 +1120,23 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         return
 
     # Wenn keine gültige Zeile gefunden wurde
-    if best_row is None or best_equity is None:
+    if chosen_row is None or chosen_equity is None:
         print("⚠️ Kein gültiger Ergebnis-Datensatz gefunden (results.csv leer/invalid).")
         return
+
 
     # Wenn equity durchgängig 0 => nichts ausgeben/schreiben
     if not any_nonzero_equity:
         print("ℹ️ Keine Trades/kein Effekt: equity ist durchgängig 0 -> kein Export.")
         return
 
-    # Trades/Closes aus der best_row lesen (falls vorhanden)
+    # Trades/Closes aus der chosen_row lesen (falls vorhanden)
     closes_val = ""
     if "closes" in header:
         ci = header.index("closes")
-        if ci < len(best_row):
-            closes_val = best_row[ci].strip()
+        if ci < len(chosen_row):
+            closes_val = chosen_row[ci].strip()
+
     
     # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
     # (genau so wird results.csv bei dir geschrieben)
@@ -1100,8 +1145,8 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if k not in header:
             continue
         idx = header.index(k)
-        if idx < len(best_row):
-            params_out.append((k, best_row[idx].strip()))
+        if idx < len(chosen_row):
+            params_out.append((k, chosen_row[idx].strip()))
 
     if not params_out:
         print("⚠️ Keine Parameter-Spalten gefunden -> kein Export.")
@@ -1176,11 +1221,11 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         range_start = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
         range_end   = datetime.fromtimestamp(t1_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")
 
-    def _best_row_val(col_name: str) -> str:
+    def _chosen_row_val(col_name: str) -> str:
         if col_name in header:
             j = header.index(col_name)
-            if j < len(best_row):
-                return best_row[j].strip()
+            if j < len(chosen_row):
+                return chosen_row[j].strip()
         return ""
 
     hist_vals = [
@@ -1188,23 +1233,25 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         range_start,
         range_end,
         dur_hms,
-        f"{best_equity:.6f}".replace(".", ","),
+        f"{chosen_equity:.6f}".replace(".", ","),
         closes_val,
-        _best_row_val("sum_wins"),
-        _best_row_val("sum_losses_abs"),
-        _best_row_val("profit_factor"),
-        _best_row_val("win_trades"),
-        _best_row_val("loss_trades"),
+        _chosen_row_val("sum_wins"),
+        _chosen_row_val("sum_losses_abs"),
+        _chosen_row_val("profit_factor"),
+        _chosen_row_val("win_trades"),
+        _chosen_row_val("loss_trades"),
     ] + [dict(params_out).get(k, "") for k in PARAM_SPECS.keys()]
 
     with open(history_file, "a", encoding="utf-8", newline="") as hf:
         hf.write(";".join(hist_vals) + "\n")
 
-
     # Log-Ausgabe
-    equity_de = f"{best_equity:.2f}".replace(".", ",")
+    equity_de = f"{chosen_equity:.2f}".replace(".", ",")
     print("\n===== BESTER PARAMETER-SATZ (aus results.csv) =====")
     print(f"Equity: {equity_de}")
+
+    if fallback_reason:
+        print("⚠️ " + fallback_reason)
 
     if t0_ms is not None and t1_ms is not None:
         t0_str = datetime.fromtimestamp(t0_ms / 1000, tz=bot.LOCAL_TZ).strftime("%d.%m.%Y %H:%M:%S %Z")

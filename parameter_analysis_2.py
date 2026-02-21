@@ -49,7 +49,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 400000 # << anpassen: wie viele letzte Zeilen übernehmen? | Maximalwert
-SNAPSHOT_LAST_LINES = 53000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+SNAPSHOT_LAST_LINES = 60000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
 ESTIMATED_PERIOD_MINUTES = 720  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
@@ -1128,8 +1128,14 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
         # bestes Full-Window Ergebnis mit mindestens 1 Close merken
         if equity_full is not None and closes_full >= 1:
-            if best_equity_any_full is None or equity_full > best_equity_any_full:
-                best_equity_any_full = equity_full
+            if MIN_CLOSED_TRADES_FOR_EXPORT > 0:
+                tf_full = min(1.0, closes_full / float(MIN_CLOSED_TRADES_FOR_EXPORT))
+            else:
+                tf_full = 0.0
+            score_full = equity_full * tf_full
+
+            if best_equity_any_full is None or score_full > best_equity_any_full:
+                best_equity_any_full = score_full
                 best_row_any_full = cols
 
         # --- PF lesen (falls vorhanden) ---
@@ -1151,31 +1157,46 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             pf_missing_or_empty = True
             pf_ok = True
 
-        
+        # ------------------------------------------------------------
+        # Phase 4: Robuster Score (statt nur equity_val)
+        # - trade_factor bestraft zu wenige Trades automatisch
+        # - pf_factor gibt leichtes Gewicht auf "Qualität", gedeckelt
+        # ------------------------------------------------------------
+        if MIN_CLOSED_TRADES_FOR_EXPORT > 0:
+            trade_factor = min(1.0, closes_i / float(MIN_CLOSED_TRADES_FOR_EXPORT))
+        else:
+            trade_factor = 0.0
+
+        pf_factor = 1.0
+        if pf_val is not None and PF_MIN > 0:
+            pf_factor = min(2.0, pf_val / float(PF_MIN))
+
+        score_relaxed = equity_val * trade_factor       # PF bewusst ignoriert
+        score_strict  = equity_val * trade_factor * pf_factor
+    
         # Phase 3: Improvement-Gate darf nicht an equity_val==0 sterben
         compare_equity = equity_val
         if equity_score_col == "equity_val" and closes_i == 0:
             compare_equity = equity_full if equity_full is not None else equity_val
         # --- Improvement-Gate: nur Kandidaten besser als Startsatz zulassen ---
-        if start_equity is not None and compare_equity <= start_equity:
+        if start_equity is not None and score_strict <= start_equity:
             continue
-
 
         # --- Bucket 3 (letzte Rettung): closes>=1, PF egal ---
         if closes_i >= 1:
             if (best_equity_any is None
-                or equity_val > best_equity_any
-                or (equity_val == best_equity_any and closes_i > best_closes_any)):
-                best_equity_any = equity_val
+                or score_relaxed > best_equity_any
+                or (score_relaxed == best_equity_any and closes_i > best_closes_any)):
+                best_equity_any = score_relaxed
                 best_row_any = cols
                 best_closes_any = closes_i
 
         # --- Bucket 2: closes>=MIN, PF egal (wenn PF-Gate alles wegfiltert) ---
         if closes_i >= MIN_CLOSED_TRADES_FOR_EXPORT:
             if (best_equity_relaxed_pf is None
-                or equity_val > best_equity_relaxed_pf
-                or (equity_val == best_equity_relaxed_pf and closes_i > best_closes_relaxed_pf)):
-                best_equity_relaxed_pf = equity_val
+                or score_relaxed > best_equity_relaxed_pf
+                or (score_relaxed == best_equity_relaxed_pf and closes_i > best_closes_relaxed_pf)):
+                best_equity_relaxed_pf = score_relaxed
                 best_row_relaxed_pf = cols
                 best_closes_relaxed_pf = closes_i
 
@@ -1185,9 +1206,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if closes_i >= MIN_CLOSED_TRADES_FOR_EXPORT and pf_ok:
             # Max suchen; bei Gleichstand gewinnt die Zeile mit mehr closes
             if (best_equity is None
-                or equity_val > best_equity
-                or (equity_val == best_equity and closes_i > best_closes)):
-                best_equity = equity_val
+                or score_strict > best_equity
+                or (score_strict == best_equity and closes_i > best_closes)):
+                best_equity = score_strict
                 best_row = cols
                 best_closes = closes_i
 
@@ -1399,7 +1420,7 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     # Log-Ausgabe
     equity_de = f"{chosen_equity:.2f}".replace(".", ",")
     print("\n===== BESTER PARAMETER-SATZ (aus results.csv) =====")
-    print(f"Equity: {equity_de}")
+    print(f"Score: {equity_de}")
 
     if fallback_reason:
         print("⚠️ " + fallback_reason)
@@ -1652,29 +1673,58 @@ def main():
                             print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
                                 f"Balance={balance_str} | closes={m['closes']} | {_param_str(best_params_seen or p)}")
 
-                        # ✅ NEW BEST Tracking (Phase 3): Scoring analog Export -> equity_val bevorzugt
-                        eq = round(float(m.get("equity_val", m["equity"])), 2)
-                        cl = int(m.get("closes_val", m.get("closes", 0)))
-                        pf = float(m.get("profit_factor_val", m.get("profit_factor", 0.0)))
+                        # ✅ NEW BEST Tracking: Phase-4 Score (wie Export-Logik: Val bevorzugt, Full-Window wenn Val tot)
+                        equity_val = float(m.get("equity_val", 0.0))
+                        closes_val = int(m.get("closes_val", 0))
+                        pf_val = float(m.get("profit_factor_val", 0.0))
+
+                        equity_full = float(m.get("equity", 0.0))
+                        closes_full = int(m.get("closes", 0))
+                        pf_full = float(m.get("profit_factor", 0.0))
+
+                        # Val bevorzugen – aber wenn closes_val==0: Full-Window für NEW BEST nehmen
+                        if closes_val > 0:
+                            eq_src = equity_val
+                            cl_src = closes_val
+                            pf_src = pf_val
+                            src_tag = "VAL"
+                        else:
+                            eq_src = equity_full
+                            cl_src = closes_full
+                            pf_src = pf_full
+                            src_tag = "FULL"
+
+                        # Score wie Phase 4
+                        if MIN_CLOSED_TRADES_FOR_EXPORT > 0:
+                            trade_factor = min(1.0, cl_src / float(MIN_CLOSED_TRADES_FOR_EXPORT))
+                        else:
+                            trade_factor = 0.0
+
+                        pf_factor = 1.0
+                        if PF_MIN > 0:
+                            pf_factor = min(2.0, (pf_src if pf_src < 1e6 else PF_MIN) / float(PF_MIN))
+
+                        score = round(eq_src * trade_factor * pf_factor, 2)
+                        cl = int(cl_src)
 
                         is_better = False
                         if best_equity_seen is None:
                             is_better = True
-                        elif eq > best_equity_seen:
+                        elif score > best_equity_seen:
                             is_better = True
-                        elif eq == best_equity_seen and (best_closes_seen is None or cl > best_closes_seen):
+                        elif score == best_equity_seen and (best_closes_seen is None or cl > best_closes_seen):
                             is_better = True
 
                         if is_better:
-                            best_equity_seen = eq
+                            best_equity_seen = score
                             best_closes_seen = cl
                             best_run_seen = next_to_write
                             best_params_seen = p
 
-                            best_de = f"{eq:.2f}".replace(".", ",")
+                            best_de = f"{score:.2f}".replace(".", ",")
                             print(
-                                f"NEW BEST | Run {next_to_write}/{max_runs} | Equity_val={best_de} | closes_val={cl} "
-                                f"| PF_val={pf:.3f} | {_param_str(p)}"
+                                f"NEW BEST | Run {next_to_write}/{max_runs} | Score={best_de} | closes={cl} | src={src_tag} "
+                                f"| PF={pf_src:.3f} | {_param_str(p)}"
                             )
 
                         csv_vals = [

@@ -49,7 +49,7 @@ BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = s
 # ============================================================
 SNAPSHOT_ENABLED = True # True = nimmt N Zeilen aus Bot Tick Datei, False = nimmt komplette Datei aus lokalem Verzeichnis
 DEFAULT_SNAPSHOT_LAST_LINES = 400000 # << anpassen: wie viele letzte Zeilen übernehmen? | Maximalwert
-SNAPSHOT_LAST_LINES = 150000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
+SNAPSHOT_LAST_LINES = 53000 # DEFAULT_SNAPSHOT_LAST_LINES # Arbeitsparameter, wird variabel auf Periode angepasst, niedriger Startwert = schneller Start
 ESTIMATED_PERIOD_MINUTES = 720  # gewünschte Dauer des analysierten Zeitraums je Lauf, z.B. 150 Minuten (= 2.5h)
 
 # ============================================================
@@ -62,6 +62,12 @@ START_PARAMS_STR = {} # Initial Parametersatz des aktuellen laufs für Vergleich
 USE_START_VALUES_FROM_PARAMETER_CSV = True   # True = Startwerte aus parameter.csv, False = Standardwerte aus PARAM_SPECS
 # --- Quality Gate ---
 PF_MIN = 1.20  # Profit Factor Mindestwert für Export (1.00=Break-even, 1.10=10% Puffer)
+
+# --- Walk-Forward Split (Phase 3) ---
+# Anteil des Zeitfensters, der als "Train" gilt. Rest ist "Validate".
+# Beispiel: 0.67 => 67% Train, 33% Validate.
+WALK_FORWARD_SPLIT = 0.67
+
 
 # ============================================================
 # --- Parameter-Spezifikation ---
@@ -313,6 +319,7 @@ def build_param_grid(param_specs: Dict[str, Tuple[Any, ...]]) -> Tuple[List[str]
 
 _WORKER_TICKS_CACHE = None
 _WORKER_INSTRUMENTS = None
+_WORKER_SPLIT_TS_MS = None
 
 def _worker_init(instruments, ticks_dir):
     global _WORKER_TICKS_CACHE, _WORKER_INSTRUMENTS
@@ -320,10 +327,29 @@ def _worker_init(instruments, ticks_dir):
     # Jeder Worker lädt Tickdaten 1x und behält sie für alle Runs
     _WORKER_TICKS_CACHE = {epic: load_ticks_for_instrument(epic, ticks_dir) for epic in _WORKER_INSTRUMENTS}
 
-def _worker_run(run_id, params):
-    metrics = run_single_backtest(_WORKER_INSTRUMENTS, params, _WORKER_TICKS_CACHE)
-    return run_id, metrics, params
+    # Phase 3: Split-Timestamp (Train/Validate) einmalig pro Worker berechnen
+    global _WORKER_SPLIT_TS_MS
+    min_ts = None
+    max_ts = None
 
+    for _epic, _ticks in _WORKER_TICKS_CACHE.items():
+        if not _ticks:
+            continue
+        t0 = _ticks[0][0]
+        t1 = _ticks[-1][0]
+        if min_ts is None or t0 < min_ts:
+            min_ts = t0
+        if max_ts is None or t1 > max_ts:
+            max_ts = t1
+
+    if min_ts is not None and max_ts is not None and max_ts > min_ts:
+        _WORKER_SPLIT_TS_MS = int(min_ts + (max_ts - min_ts) * float(WALK_FORWARD_SPLIT))
+    else:
+        _WORKER_SPLIT_TS_MS = None
+
+def _worker_run(run_id, params):
+    metrics = run_single_backtest(_WORKER_INSTRUMENTS, params, _WORKER_TICKS_CACHE, _WORKER_SPLIT_TS_MS)
+    return run_id, metrics, params
 
 def _tail_lines_bytes(path: Path, n_lines: int, chunk_size: int = 1024 * 1024) -> bytes:
     """
@@ -470,19 +496,35 @@ class DummyResponse:
 
 
 class BacktestBroker:
-    def __init__(self):
+    def __init__(self, split_ts_ms: Optional[int] = None):
+        self.split_ts_ms = split_ts_ms
+
         self.realized_pnl = 0.0
         self.opens = 0
         self.closes = 0
-        self.last_price: Dict[str, Tuple[float, float, int]] = {}  # epic -> (bid, ask, ts)
-        # ------------------------------------------------------------
-        # Quality-Metriken (Trade-basiert) für Profit Factor / AvgWin/AvgLoss
-        # Diese Werte werden NUR im Backtest genutzt (bot_2), nicht im Live-Bot.
-        # ------------------------------------------------------------
-        self.sum_wins = 0.0          # Summe aller realisierten Gewinn-Trades (>= 0)
-        self.sum_losses_abs = 0.0    # Betrag der Summe aller realisierten Verlust-Trades (>= 0)
-        self.win_trades = 0          # Anzahl Gewinn-Trades
-        self.loss_trades = 0         # Anzahl Verlust-Trades
+        self.last_price: Dict[str, Tuple[float, float, int]] = {}
+
+        # Phase 3: Train/Validate getrennt
+        self.realized_pnl_train = 0.0
+        self.realized_pnl_val = 0.0
+        self.closes_train = 0
+        self.closes_val = 0
+
+        self.sum_wins = 0.0
+        self.sum_losses_abs = 0.0
+        self.win_trades = 0
+        self.loss_trades = 0
+
+        # Phase 3: PF/Trades getrennt
+        self.sum_wins_train = 0.0
+        self.sum_losses_abs_train = 0.0
+        self.win_trades_train = 0
+        self.loss_trades_train = 0
+
+        self.sum_wins_val = 0.0
+        self.sum_losses_abs_val = 0.0
+        self.win_trades_val = 0
+        self.loss_trades_val = 0
 
 
     def set_last_price(self, epic: str, bid: float, ask: float, ts_ms: int):
@@ -512,7 +554,7 @@ class BacktestBroker:
         entry = float(pos.get("entry_price") or 0.0)
         size = float(pos.get("size") or 0.0)
 
-        bid, ask, _ = self.last_price.get(epic, (None, None, None))
+        bid, ask, ts_ms = self.last_price.get(epic, (None, None, None))
         if bid is None or ask is None:
             # ohne Preis keine sinnvolle Realisierung
             bot.open_positions[epic] = None
@@ -528,17 +570,45 @@ class BacktestBroker:
         else:
             exit_price = ask
             pnl = (entry - exit_price) * size
-        
-                # ------------------------------------------------------------
+
+        # Phase 3: Train/Validate Bucket nach Exit-Zeitpunkt
+        is_train = False
+        if self.split_ts_ms is not None and ts_ms is not None:
+            is_train = (ts_ms <= self.split_ts_ms)
+        else:
+            # Wenn kein Split verfügbar: alles als "Train" behandeln (neutral)
+            is_train = True
+                
+        # ------------------------------------------------------------
         # Quality-Metriken: Gewinn-/Verlust-Summen für Profit Factor
         # ------------------------------------------------------------
+        # Global (wie bisher)
         if pnl > 0:
             self.sum_wins += pnl
             self.win_trades += 1
         elif pnl < 0:
             self.sum_losses_abs += abs(pnl)
             self.loss_trades += 1
-        # pnl == 0 -> neutral, ignorieren wir für PF
+
+        # Phase 3: Train/Validate
+        if is_train:
+            self.realized_pnl_train += pnl
+            self.closes_train += 1
+            if pnl > 0:
+                self.sum_wins_train += pnl
+                self.win_trades_train += 1
+            elif pnl < 0:
+                self.sum_losses_abs_train += abs(pnl)
+                self.loss_trades_train += 1
+        else:
+            self.realized_pnl_val += pnl
+            self.closes_val += 1
+            if pnl > 0:
+                self.sum_wins_val += pnl
+                self.win_trades_val += 1
+            elif pnl < 0:
+                self.sum_losses_abs_val += abs(pnl)
+                self.loss_trades_val += 1
 
         self.realized_pnl += pnl
         self.closes += 1
@@ -594,10 +664,11 @@ def ts_ms_to_local_str(ts_ms: int) -> str:
 def run_single_backtest(
     instruments: List[str],
     params: Dict[str, Any],
-    ticks_cache: Dict[str, List[Tuple[int, float, float, int]]]
+    ticks_cache: Dict[str, List[Tuple[int, float, float, int]]],
+    split_ts_ms: Optional[int] = None
     ) -> Dict[str, Any]:
 
-    broker = BacktestBroker()
+    broker = BacktestBroker(split_ts_ms=split_ts_ms)
     reset_bot_state(instruments, broker)
     patch_bot_for_backtest(broker)
     set_bot_params(params)
@@ -702,7 +773,7 @@ def run_single_backtest(
                 direction = pos.get("direction")
                 entry = float(pos.get("entry_price") or 0.0)
                 size = float(pos.get("size") or 0.0)
-                bid, ask, _ = broker.last_price.get(epic, (None, None, None))
+                bid, ask, _ts = broker.last_price.get(epic, (None, None, None))
                 if bid is not None and ask is not None:
                     if direction == "BUY":
                         unrealized += (bid - entry) * size
@@ -721,6 +792,12 @@ def run_single_backtest(
     else:
         profit_factor = 999999.0 if broker.sum_wins > 0 else 0.0
 
+    # Phase 3: Profit Factor nur für Validate
+    if broker.sum_losses_abs_val > 0:
+        profit_factor_val = broker.sum_wins_val / broker.sum_losses_abs_val
+    else:
+        profit_factor_val = 999999.0 if broker.sum_wins_val > 0 else 0.0
+
     return {
         "last_ts_ms": last_ts,
         "equity": equity,
@@ -735,6 +812,12 @@ def run_single_backtest(
         "win_trades": broker.win_trades,
         "loss_trades": broker.loss_trades,
         "profit_factor": profit_factor,
+        # Phase 3: Train/Validate getrennt
+        "equity_train": broker.realized_pnl_train,
+        "equity_val": broker.realized_pnl_val,
+        "closes_train": broker.closes_train,
+        "closes_val": broker.closes_val,
+        "profit_factor_val": profit_factor_val,
     }
 
 # ============================================================
@@ -840,6 +923,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
     header = lines[0].split(";")
 
+    # Phase 3: Scoring-Spalte (Validate bevorzugt)
+    equity_score_col = "equity_val" if "equity_val" in header else "equity"
+    equity_idx = header.index(equity_score_col)
 
 
     # DEBUG: Header + Startsatz-Keys prüfen (fehlen Keys aus START_PARAMS_STR im results.csv-Header?)
@@ -855,20 +941,24 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     else:
         print("🔎 DEBUG START_PARAMS_STR is empty/None")
 
-
-
-    if "equity" not in header:
-        print(f"⚠️ Spalte 'equity' nicht gefunden in: {results_csv}")
+    if equity_score_col not in header:
+        print(f"⚠️ Spalte '{equity_score_col}' nicht gefunden in: {results_csv}")
         return
 
-    equity_idx = header.index("equity")
+    # entfernen Phase 3: equity_idx = header.index("equity")
 
     # --- Profit Factor Gate (wenn Spalte vorhanden) ---
-    pf_idx = header.index("profit_factor") if "profit_factor" in header else None
+    pf_col = "profit_factor_val" if "profit_factor_val" in header else "profit_factor"
+    pf_idx = header.index(pf_col) if pf_col in header else None
 
-
-    closes_idx = header.index("closes") if "closes" in header else None
+    # Phase 3: closes passend zum Scoring wählen (Validate bevorzugt)
+    closes_col = "closes_val" if (equity_score_col == "equity_val" and "closes_val" in header) else "closes"
+    closes_idx = header.index(closes_col) if closes_col in header else None
     best_closes = -1
+
+    # Phase 3: Full-Window Indizes (für Fallback, falls Validate keine Trades hat)
+    equity_full_idx = header.index("equity") if "equity" in header else equity_idx
+    closes_full_idx = header.index("closes") if "closes" in header else closes_idx
 
     best_equity = None
     best_row = None
@@ -886,6 +976,10 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     best_equity_any = None
     best_row_any = None
     best_closes_any = -1
+    # Phase 3 Fallback: bestes Ergebnis im Full-Window (equity/closes),
+    # falls Validate (closes_val) keine Trades liefert
+    best_equity_any_full = None
+    best_row_any_full = None
 
     # Start-Equity aus results.csv bestimmen (Zeile finden, deren Parameter dem Startsatz entsprechen)
     start_equity = None
@@ -1001,6 +1095,9 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
 
         # fmt_de schreibt Komma als Dezimaltrenner -> für Vergleich in float wandeln
         equity_val = float(equity_str.replace(",", "."))
+
+        # Phase 3: "kein Effekt" darf nicht nur an equity_val hängen,
+        # sonst blockiert Export bei closes_val==0 komplett.
         if equity_val != 0.0:
             any_nonzero_equity = True
 
@@ -1009,6 +1106,31 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         if closes_idx is not None and closes_idx < len(cols):
             v = cols[closes_idx].strip()
             closes_i = int(v) if v.isdigit() else 0
+        
+        # ------------------------------------------------------------
+        # Phase 3 Fallback: Full-Window equity/closes (unabhängig von closes_val)
+        # ------------------------------------------------------------
+        equity_full = None
+        if equity_full_idx is not None and equity_full_idx < len(cols):
+            try:
+                equity_full = float(cols[equity_full_idx].strip().replace(",", "."))
+            except Exception:
+                equity_full = None
+
+        closes_full = 0
+        if closes_full_idx is not None and closes_full_idx < len(cols):
+            vv = cols[closes_full_idx].strip()
+            closes_full = int(vv) if vv.isdigit() else 0
+
+        # any_nonzero_equity: auch Full-Window berücksichtigen, sonst fälschlich "kein Effekt"
+        if (equity_full is not None and abs(equity_full) > 1e-12) or closes_full >= 1:
+            any_nonzero_equity = True
+
+        # bestes Full-Window Ergebnis mit mindestens 1 Close merken
+        if equity_full is not None and closes_full >= 1:
+            if best_equity_any_full is None or equity_full > best_equity_any_full:
+                best_equity_any_full = equity_full
+                best_row_any_full = cols
 
         # --- PF lesen (falls vorhanden) ---
         pf_ok = True
@@ -1029,9 +1151,15 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
             pf_missing_or_empty = True
             pf_ok = True
 
+        
+        # Phase 3: Improvement-Gate darf nicht an equity_val==0 sterben
+        compare_equity = equity_val
+        if equity_score_col == "equity_val" and closes_i == 0:
+            compare_equity = equity_full if equity_full is not None else equity_val
         # --- Improvement-Gate: nur Kandidaten besser als Startsatz zulassen ---
-        if start_equity is not None and equity_val <= start_equity:
+        if start_equity is not None and compare_equity <= start_equity:
             continue
+
 
         # --- Bucket 3 (letzte Rettung): closes>=1, PF egal ---
         if closes_i >= 1:
@@ -1067,6 +1195,12 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     chosen_row = best_row
     chosen_equity = best_equity
     fallback_reason = None
+
+    # --- Phase 3 Zusatz-Fallback: Validate hatte keine Trades -> Full-Window verwenden ---
+    if chosen_row is None and equity_score_col == "equity_val" and best_row_any_full is not None:
+        chosen_row = best_row_any_full
+        chosen_equity = best_equity_any_full
+        fallback_reason = "Fallback Phase 3: closes_val==0 im gesamten Lauf -> Auswahl nach Full-Window (equity/closes)."
 
     if chosen_row is None:
         if best_row_relaxed_pf is not None:
@@ -1130,13 +1264,10 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         print("ℹ️ Keine Trades/kein Effekt: equity ist durchgängig 0 -> kein Export.")
         return
 
-    # Trades/Closes aus der chosen_row lesen (falls vorhanden)
+    # Trades/Closes aus der chosen_row lesen (passend zum Gate)
     closes_val = ""
-    if "closes" in header:
-        ci = header.index("closes")
-        if ci < len(chosen_row):
-            closes_val = chosen_row[ci].strip()
-
+    if closes_idx is not None and closes_idx < len(chosen_row):
+        closes_val = chosen_row[closes_idx].strip()
     
     # Parameter aus best_row ziehen: Spalten entsprechen PARAM_SPECS.keys()
     # (genau so wird results.csv bei dir geschrieben)
@@ -1207,8 +1338,17 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
     if not history_file.exists():
         hist_header = [
             "timestamp", "range_start", "range_end", "range_duration",
+
+            # Score + Aktivität (Phase 3 konsistent)
             "equity", "closes",
-            "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades"
+
+            # Quality-Metriken (global)
+            "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades",
+
+            # Phase 3: Train/Validate
+            "equity_train", "equity_val",
+            "closes_train", "closes_val",
+            "profit_factor_val",
         ] + list(PARAM_SPECS.keys())
 
         with open(history_file, "w", encoding="utf-8", newline="") as hf:
@@ -1233,13 +1373,24 @@ def export_best_params_from_results(results_csv: Path, out_parameter_csv: Path) 
         range_start,
         range_end,
         dur_hms,
+
+        # Score + Aktivität (score ist chosen_equity; closes_val kommt bereits passend aus closes_idx)
         f"{chosen_equity:.6f}".replace(".", ","),
         closes_val,
+
+        # Quality-Metriken (global)
         _chosen_row_val("sum_wins"),
         _chosen_row_val("sum_losses_abs"),
         _chosen_row_val("profit_factor"),
         _chosen_row_val("win_trades"),
         _chosen_row_val("loss_trades"),
+
+        # Phase 3: Train/Validate aus der chosen_row
+        _chosen_row_val("equity_train"),
+        _chosen_row_val("equity_val"),
+        _chosen_row_val("closes_train"),
+        _chosen_row_val("closes_val"),
+        _chosen_row_val("profit_factor_val"),
     ] + [dict(params_out).get(k, "") for k in PARAM_SPECS.keys()]
 
     with open(history_file, "a", encoding="utf-8", newline="") as hf:
@@ -1407,8 +1558,10 @@ def main():
         "run_time", "run", "total",
         "equity", "realized", "unrealized",
         "opens", "closes", "open_end",
-        # Quality-Metriken (Trade-basiert)
-        "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades"
+        "sum_wins", "sum_losses_abs", "profit_factor", "win_trades", "loss_trades",
+        "equity_train", "equity_val",
+        "closes_train", "closes_val",
+        "profit_factor_val"
     ] + list(PARAM_SPECS.keys())
 
     with open(RESULTS_CSV_FILE, "w", encoding="utf-8", newline="") as f_csv:
@@ -1499,9 +1652,10 @@ def main():
                             print(f"{run_time_str} | Run {next_to_write}/{max_runs} | "
                                 f"Balance={balance_str} | closes={m['closes']} | {_param_str(best_params_seen or p)}")
 
-                        # ✅ NEW BEST Tracking (Equity besser oder bei gleicher Equity mehr closes)
-                        eq = round(float(m["equity"]), 2)
-                        cl = int(m.get("closes", 0))
+                        # ✅ NEW BEST Tracking (Phase 3): Scoring analog Export -> equity_val bevorzugt
+                        eq = round(float(m.get("equity_val", m["equity"])), 2)
+                        cl = int(m.get("closes_val", m.get("closes", 0)))
+                        pf = float(m.get("profit_factor_val", m.get("profit_factor", 0.0)))
 
                         is_better = False
                         if best_equity_seen is None:
@@ -1519,8 +1673,8 @@ def main():
 
                             best_de = f"{eq:.2f}".replace(".", ",")
                             print(
-                                f"NEW BEST | Run {next_to_write}/{max_runs} | Equity={best_de} | closes={cl} "
-                                f"| PF={metrics.get('profit_factor', 0.0):.3f} | {_param_str(p)}"
+                                f"NEW BEST | Run {next_to_write}/{max_runs} | Equity_val={best_de} | closes_val={cl} "
+                                f"| PF_val={pf:.3f} | {_param_str(p)}"
                             )
 
                         csv_vals = [
@@ -1539,6 +1693,12 @@ def main():
                             fmt_de(m.get("profit_factor", 0.0)),
                             str(m.get("win_trades", 0)),
                             str(m.get("loss_trades", 0)),
+                            # Phase 3
+                            fmt_de(m.get("equity_train", 0.0)),
+                            fmt_de(m.get("equity_val", 0.0)),
+                            str(m.get("closes_train", 0)),
+                            str(m.get("closes_val", 0)),
+                            fmt_de(m.get("profit_factor_val", 0.0)),
                         ] + [fmt_de(p[k]) for k in PARAM_SPECS.keys()]
 
                         f_csv.write(";".join(csv_vals) + "\n")
@@ -1567,7 +1727,13 @@ def main():
 
         for i, combo in enumerate(combos, 1):
             params = {k: v for k, v in zip(keys, combo)}
-            metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache)
+
+            # Split wie im Worker berechnen (einmalig)
+            if "_SEQ_SPLIT_TS_MS" not in globals():
+                min_ts, max_ts, _ = get_snapshot_time_range(INSTRUMENTS, TICKS_DIR)
+                globals()["_SEQ_SPLIT_TS_MS"] = int(min_ts + (max_ts - min_ts) * float(WALK_FORWARD_SPLIT)) if (min_ts and max_ts and max_ts > min_ts) else None
+
+            metrics = run_single_backtest(INSTRUMENTS, params, ticks_cache, globals()["_SEQ_SPLIT_TS_MS"])
 
             parts = []
             for k in PARAM_SPECS.keys():
@@ -1595,6 +1761,12 @@ def main():
                 fmt_de(metrics.get("profit_factor", 0.0)),
                 str(metrics.get("win_trades", 0)),
                 str(metrics.get("loss_trades", 0)),
+                # Phase 3
+                fmt_de(metrics.get("equity_train", 0.0)),
+                fmt_de(metrics.get("equity_val", 0.0)),
+                str(metrics.get("closes_train", 0)),
+                str(metrics.get("closes_val", 0)),
+                fmt_de(metrics.get("profit_factor_val", 0.0)),
             ] + [fmt_de(params[k]) for k in PARAM_SPECS.keys()]
 
             f_csv.write(";".join(csv_vals) + "\n")

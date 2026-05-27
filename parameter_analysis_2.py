@@ -42,7 +42,7 @@ MAX_INFLIGHT = 0   # 0 = automatisch (workers * 2)
 
 # --- Output/Speed ---
 SUPPRESS_BOT_OUTPUT = True
-BACKTEST_CALL_ON_CANDLE_FORMING = False   # True = 1:1 Live-Verhalten, False = schnell
+BACKTEST_CALL_ON_CANDLE_FORMING = True   # True = 1:1 Live-Verhalten, False = schnell
 
 # ============================================================
 # SNAPSHOT: letzte N Tick-Zeilen aus dem laufenden Bot übernehmen
